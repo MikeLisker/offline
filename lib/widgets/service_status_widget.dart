@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
 import '../providers/pet_provider.dart';
+import '../services/permissions_service.dart';
 
 class ServiceStatusWidget extends StatefulWidget {
   const ServiceStatusWidget({Key? key}) : super(key: key);
@@ -13,6 +14,7 @@ class ServiceStatusWidget extends StatefulWidget {
 class _ServiceStatusWidgetState extends State<ServiceStatusWidget> {
   bool _isMonitoring = false;
   Timer? _timer;
+  final _permissionsService = PermissionsService();
 
   @override
   void initState() {
@@ -27,7 +29,13 @@ class _ServiceStatusWidgetState extends State<ServiceStatusWidget> {
     
     try {
       final provider = context.read<PetProvider>();
-      if (provider.isInitialized && provider.isMonitoring) {
+      
+      // Verificar que AMBAS condiciones sean verdaderas:
+      // 1. PetProvider está inicializado y monitoreando
+      // 2. Los permisos reales están otorgados
+      final usageAccessEnabled = await _permissionsService.isUsageAccessEnabled();
+      
+      if (provider.isInitialized && provider.isMonitoring && usageAccessEnabled) {
         setState(() => _isMonitoring = true);
       } else {
         setState(() => _isMonitoring = false);
@@ -65,7 +73,9 @@ class _ServiceStatusWidgetState extends State<ServiceStatusWidget> {
           ),
           const SizedBox(width: 6),
           Text(
-            _isMonitoring ? 'Monitoreo Activo' : 'Monitoreo Detenido',
+            _isMonitoring 
+              ? '✅ Monitoreo Activo' 
+              : '❌ Monitoreo Inactivo (Permisos requeridos)',
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.bold,

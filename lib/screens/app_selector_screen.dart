@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:logger/logger.dart';
 import '../providers/pet_provider.dart';
 
 // Simple model to replace DeviceApps.Application
@@ -18,14 +20,17 @@ class AppSelectorScreen extends StatefulWidget {
 }
 
 class _AppSelectorScreenState extends State<AppSelectorScreen> {
+  static final logger = Logger();
+  static const platform = MethodChannel('com.example.offline/screen_time');
+  
   List<_MockApplication> _allApps = [];
   List<_MockApplication> _filteredApps = [];
   final List<String> _selectedPackages = [];
   bool _isLoading = true;
   String _searchQuery = "";
 
-  // Predefined list of common apps (distracting and system)
-  static const List<Map<String, String>> _PREDEFINED_APPS = [
+  // Predefined list of common apps (distracting and system) - FALLBACK
+  static const List<Map<String, String>> _FALLBACK_APPS = [
     {'packageName': 'com.instagram.android', 'appName': 'Instagram'},
     {'packageName': 'com.facebook.katana', 'appName': 'Facebook'},
     {'packageName': 'com.twitter.android', 'appName': 'Twitter'},
@@ -37,7 +42,10 @@ class _AppSelectorScreenState extends State<AppSelectorScreen> {
     {'packageName': 'com.whatsapp', 'appName': 'WhatsApp'},
     {'packageName': 'org.telegram.messenger', 'appName': 'Telegram'},
     {'packageName': 'com.android.chrome', 'appName': 'Chrome'},
-    {'packageName': 'com.android.settings', 'appName': 'Settings'},
+    {'packageName': 'com.google.android.youtube', 'appName': 'YouTube'},
+    {'packageName': 'com.spotify.music', 'appName': 'Spotify'},
+    {'packageName': 'com.netflix.mediaclient', 'appName': 'Netflix'},
+    {'packageName': 'com.amazon.venezia', 'appName': 'Amazon Shopping'},
   ];
 
   @override
@@ -49,8 +57,44 @@ class _AppSelectorScreenState extends State<AppSelectorScreen> {
   Future<void> _loadApps() async {
     setState(() => _isLoading = true);
     
-    // Use predefined apps list instead of DeviceApps
-    final apps = _PREDEFINED_APPS
+    try {
+      // Intentar obtener apps reales del dispositivo
+      final result = await platform.invokeMethod<List>('getInstalledApps');
+      
+      if (result != null && result.isNotEmpty) {
+        logger.i('✅ Se obtuvieron ${result.length} apps instaladas del dispositivo');
+        
+        final apps = result
+            .cast<Map<dynamic, dynamic>>()
+            .map((app) => _MockApplication(
+              packageName: app['packageName'] as String? ?? '',
+              appName: app['appName'] as String? ?? 'Unknown',
+            ))
+            .where((app) => app.packageName.isNotEmpty)
+            .toList();
+        
+        if (mounted) {
+          final petProvider = context.read<PetProvider>();
+          _selectedPackages.clear();
+          _selectedPackages.addAll(petProvider.distractingApps);
+
+          apps.sort((a, b) => a.appName.toLowerCase().compareTo(b.appName.toLowerCase()));
+
+          setState(() {
+            _allApps = apps;
+            _filteredApps = apps;
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+    } on PlatformException catch (e) {
+      logger.w('⚠️ No se pudieron obtener apps del dispositivo: ${e.message}. Usando fallback.');
+    }
+    
+    // Fallback: Usar lista predeterminada
+    logger.i('🔄 Usando lista de apps predeterminadas como fallback');
+    final apps = _FALLBACK_APPS
         .map((app) => _MockApplication(
           packageName: app['packageName']!,
           appName: app['appName']!,
@@ -89,7 +133,7 @@ class _AppSelectorScreenState extends State<AppSelectorScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Apps Distractoras'),
+        title: Text('Apps Distractoras (${_selectedPackages.length})'),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(60),
           child: Padding(
@@ -111,31 +155,40 @@ class _AppSelectorScreenState extends State<AppSelectorScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : ListView.builder(
-              itemCount: _filteredApps.length,
-              itemBuilder: (context, index) {
-                final app = _filteredApps[index];
-                final isSelected = _selectedPackages.contains(app.packageName);
-                
-                return CheckboxListTile(
-                  value: isSelected,
-                  title: Text(app.appName),
-                  subtitle: Text(app.packageName),
-                  secondary: const Icon(Icons.android),
-                  onChanged: (bool? value) {
-                    setState(() {
-                      if (value == true) {
-                        _selectedPackages.add(app.packageName);
-                      } else {
-                        _selectedPackages.remove(app.packageName);
-                      }
-                    });
+          : _filteredApps.isEmpty
+              ? Center(
+                  child: Text(
+                    _searchQuery.isEmpty 
+                        ? 'No hay apps disponibles'
+                        : 'No se encontraron apps con "$_searchQuery"',
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: _filteredApps.length,
+                  itemBuilder: (context, index) {
+                    final app = _filteredApps[index];
+                    final isSelected = _selectedPackages.contains(app.packageName);
+                    
+                    return CheckboxListTile(
+                      value: isSelected,
+                      title: Text(app.appName),
+                      subtitle: Text(app.packageName, style: const TextStyle(fontSize: 12)),
+                      secondary: const Icon(Icons.android),
+                      onChanged: (bool? value) {
+                        setState(() {
+                          if (value == true) {
+                            _selectedPackages.add(app.packageName);
+                          } else {
+                            _selectedPackages.remove(app.packageName);
+                          }
+                        });
+                      },
+                    );
                   },
-                );
-              },
-            ),
+                ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
+          logger.i('💾 Guardando ${_selectedPackages.length} apps distractoras seleccionadas');
           await context.read<PetProvider>().updateDistractingApps(_selectedPackages);
           if (mounted) Navigator.pop(context);
         },

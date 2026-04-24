@@ -4,11 +4,15 @@ import android.app.ActivityManager
 import android.app.usage.UsageStats
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import androidx.annotation.RequiresApi
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
@@ -21,11 +25,11 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "getScreenStats" -> {
                     try {
-                        val startTime = call.argument<Long>("startTime") ?: 0L
-                        val endTime = call.argument<Long>("endTime") ?: System.currentTimeMillis()
+                        val startTime = argumentAsLong(call, "startTime", 0L)
+                        val endTime = argumentAsLong(call, "endTime", System.currentTimeMillis())
                         
-                        val stats = getScreenTimeStats(startTime, endTime)
-                        result.success(stats)
+                        val statsJson = getScreenTimeStatsJson(startTime, endTime)
+                        result.success(statsJson)
                     } catch (e: Exception) {
                         result.error("ERROR", e.message, null)
                     }
@@ -38,26 +42,57 @@ class MainActivity : FlutterActivity() {
                         result.error("ERROR", e.message, null)
                     }
                 }
+                "getInstalledApps" -> {
+                    try {
+                        val apps = getInstalledApps()
+                        result.success(apps)
+                    } catch (e: Exception) {
+                        result.error("ERROR", e.message, null)
+                    }
+                }
+                "hasUsageAccess" -> {
+                    try {
+                        val hasAccess = hasUsageAccessPermission()
+                        result.success(hasAccess)
+                    } catch (e: Exception) {
+                        result.error("ERROR", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
     }
 
+    private fun argumentAsLong(call: MethodCall, key: String, defaultValue: Long): Long {
+        val raw = call.argument<Any>(key) ?: return defaultValue
+        return when (raw) {
+            is Long -> raw
+            is Int -> raw.toLong()
+            is Number -> raw.toLong()
+            is String -> raw.toLongOrNull() ?: defaultValue
+            else -> defaultValue
+        }
+    }
+
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
-    private fun getScreenTimeStats(startTime: Long, endTime: Long): Map<String, Int> {
-        val statsMap = mutableMapOf<String, Int>()
+    private fun getScreenTimeStatsJson(startTime: Long, endTime: Long): String {
+        val statsMap = mutableMapOf<String, String>()
         
         try {
             // Verificar permisos
             if (!hasUsageAccessPermission()) {
-                return statsMap
+                android.util.Log.w("OfflineApp", "Sin permisos de uso_stats")
+                return "{}"
             }
 
             val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
             if (usageStatsManager == null) {
-                return statsMap
+                android.util.Log.e("OfflineApp", "UsageStatsManager no disponible")
+                return "{}"
             }
 
+            android.util.Log.d("OfflineApp", "Consultando estadísticas de uso...")
+            
             // Obtener estadísticas de uso
             val stats = usageStatsManager.queryUsageStats(
                 UsageStatsManager.INTERVAL_DAILY, 
@@ -65,15 +100,79 @@ class MainActivity : FlutterActivity() {
                 endTime
             )
 
+            android.util.Log.d("OfflineApp", "Se encontraron ${stats.size} apps con estadísticas")
+            
             for (stat in stats) {
                 val packageName = stat.packageName
-                val foregroundTime = stat.totalTimeInForeground.toInt()
+                val foregroundTime: Long = stat.totalTimeInForeground  // Explícitamente Long
                 
                 if (foregroundTime > 0) {
-                    statsMap[packageName] = foregroundTime
+                    statsMap[packageName] = foregroundTime.toString()
+                    android.util.Log.d("OfflineApp", "App: $packageName, Tiempo: ${foregroundTime}ms")
                 }
             }
+            
+            android.util.Log.d("OfflineApp", "Retornando ${statsMap.size} apps con uso")
         } catch (e: Exception) {
+            android.util.Log.e("OfflineApp", "Error en getScreenTimeStats: ${e.message}")
+            e.printStackTrace()
+        }
+
+        // Convertir a JSON string
+        val jsonBuilder = StringBuilder("{")
+        statsMap.forEach { (key, value) ->
+            jsonBuilder.append("\"$key\":$value,")
+        }
+        if (jsonBuilder.length > 1) {
+            jsonBuilder.deleteCharAt(jsonBuilder.length - 1)  // Eliminar última coma
+        }
+        jsonBuilder.append("}")
+        
+        return jsonBuilder.toString()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
+    private fun getScreenTimeStats(startTime: Long, endTime: Long): Map<String, String> {
+        val statsMap = mutableMapOf<String, String>()
+        
+        try {
+            // Verificar permisos
+            if (!hasUsageAccessPermission()) {
+                android.util.Log.w("OfflineApp", "Sin permisos de uso_stats")
+                return statsMap
+            }
+
+            val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+            if (usageStatsManager == null) {
+                android.util.Log.e("OfflineApp", "UsageStatsManager no disponible")
+                return statsMap
+            }
+
+            android.util.Log.d("OfflineApp", "Consultando estadísticas de uso...")
+            
+            // Obtener estadísticas de uso
+            val stats = usageStatsManager.queryUsageStats(
+                UsageStatsManager.INTERVAL_DAILY, 
+                startTime, 
+                endTime
+            )
+
+            android.util.Log.d("OfflineApp", "Se encontraron ${stats.size} apps con estadísticas")
+            
+            for (stat in stats) {
+                val packageName = stat.packageName
+                val foregroundTime: Long = stat.totalTimeInForeground  // Explícitamente Long
+                
+                if (foregroundTime > 0) {
+                    // CONVERTIR A STRING para evitar problemas de serialización
+                    statsMap[packageName] = foregroundTime.toString()
+                    android.util.Log.d("OfflineApp", "App: $packageName, Tiempo: ${foregroundTime}ms")
+                }
+            }
+            
+            android.util.Log.d("OfflineApp", "Retornando ${statsMap.size} apps con uso")
+        } catch (e: Exception) {
+            android.util.Log.e("OfflineApp", "Error en getScreenTimeStats: ${e.message}")
             e.printStackTrace()
         }
 
@@ -110,6 +209,45 @@ class MainActivity : FlutterActivity() {
             mode == android.app.AppOpsManager.MODE_ALLOWED
         } catch (e: Exception) {
             false
+        }
+    }
+
+    /// Obtener lista de apps instaladas
+    private fun getInstalledApps(): List<Map<String, String>> {
+        val appsList = mutableListOf<Map<String, String>>()
+        
+        try {
+            val intent = Intent(Intent.ACTION_MAIN, null)
+            intent.addCategory(Intent.CATEGORY_LAUNCHER)
+            
+            // Obtener lista de aplicaciones que se pueden lanzar
+            val resolveInfos = packageManager.queryIntentActivities(intent, 0)
+            
+            for (resolveInfo in resolveInfos) {
+                try {
+                    val packageName = resolveInfo.activityInfo.packageName
+                    val appName = resolveInfo.loadLabel(packageManager).toString()
+                    
+                    if (packageName.isNotEmpty() && appName.isNotEmpty()) {
+                        appsList.add(mapOf(
+                            "packageName" to packageName,
+                            "appName" to appName
+                        ))
+                    }
+                } catch (e: Exception) {
+                    // Ignorar apps que causen error
+                    continue
+                }
+            }
+            
+            // Eliminar duplicados y ordenar alfabéticamente
+            val uniqueApps = appsList.distinctBy { it["packageName"] }
+                .sortedBy { it["appName"] }
+            
+            return uniqueApps
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return emptyList()
         }
     }
 }

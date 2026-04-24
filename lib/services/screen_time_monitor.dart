@@ -1,25 +1,34 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:logger/logger.dart';
 import '../models/app_usage.dart';
 
 class ScreenTimeMonitor {
   static final logger = Logger();
-  static const Duration CHECK_INTERVAL = Duration(minutes: 5);
+  static const Duration CHECK_INTERVAL = Duration(minutes: 1);  // Cada minuto (era 5)
   static const platform = MethodChannel('com.example.offline/screen_time');
 
   DateTime? _lastCheckTime;
+  DateTime? _screenOffStartTime;
+  bool _wasScreenOff = false;
   Timer? _monitorTimer;
   final List<Function(Duration offlineTime)> _onOfflineDetected = [];
   final List<Function(String packageName, Duration screenTime)> _onDistractionDetected = [];
   
   // Checkpoints: guardan el último totalTimeInForeground conocido de cada app
   final Map<String, int> _screenTimeCheckpoints = {};
+  
+  // Lista dinámica de apps distractoras (actualizable)
+  List<String> _distractingApps = [];
 
   /// Iniciar monitoreo en background
   void startMonitoring() {
     logger.i('🚀 Iniciando monitoreo de tiempo de pantalla');
+    logger.i('📱 Apps distractoras configuradas: $_distractingApps');
     _lastCheckTime = DateTime.now();
+    _screenOffStartTime = null;
+    _wasScreenOff = false;
 
     _monitorTimer = Timer.periodic(CHECK_INTERVAL, (_) {
       _checkScreenTime();
@@ -42,25 +51,24 @@ class ScreenTimeMonitor {
   /// Detener monitoreo
   void stopMonitoring() {
     _monitorTimer?.cancel();
+    _screenOffStartTime = null;
+    _wasScreenOff = false;
     logger.i('🛑 Monitoreo detenido');
   }
 
   /// Verificar si una app es distractora
   bool isAppDistracting(String packageName) {
-    final distractingPackages = {
-      'com.google.android.youtube',
-      'com.instagram.android',
-      'com.zhiliaoapp.musically',
-      'com.facebook.katana',
-      'com.twitter.android',
-      'com.reddit.frontpage',
-      'com.snapchat.android',
-      'com.whatsapp',
-      'com.telegram',
-      'com.viber.voip',
-    };
-    return distractingPackages.contains(packageName);
+    return _distractingApps.contains(packageName);
   }
+  
+  /// Actualizar lista de apps distractoras dinámicamente
+  void setDistractionApps(List<String> apps) {
+    _distractingApps = List.from(apps);
+    logger.i('🎯 Apps distractoras actualizadas: ${_distractingApps.length} apps');
+  }
+  
+  /// Obtener lista de apps distractoras actual
+  List<String> getDistractionApps() => List.from(_distractingApps);
 
   /// Registrar callback cuando detecta tiempo offline
   void onOfflineDetected(Function(Duration) callback) {
@@ -84,17 +92,43 @@ class ScreenTimeMonitor {
       // Primero, verificar si pantalla está apagada (offline)
       try {
         final isScreenOn = await platform.invokeMethod<bool>('isScreenOn') ?? false;
+        logger.d('📱 Estado pantalla: ${isScreenOn ? "ENCENDIDA" : "APAGADA"}, tiempo desde último check: ${timeSinceLastCheck.inMinutes}m ${timeSinceLastCheck.inSeconds % 60}s');
         
         if (!isScreenOn) {
-          // Pantalla bloqueada = tiempo offline
-          // Por cada 4 minutos bloqueado, mascota recupera 2 puntos de energía
-          final offlineMinutes = timeSinceLastCheck.inMinutes;
-          if (offlineMinutes >= 4) {
-            logger.i('✅ Usuario OFFLINE: ${offlineMinutes}m pantalla bloqueada');
-            _onOfflineDetected.forEach((cb) => cb(timeSinceLastCheck));
+          // Inicia una sesión offline al detectar la pantalla apagada por primera vez.
+          if (!_wasScreenOff) {
+            _wasScreenOff = true;
+            _screenOffStartTime = _lastCheckTime ?? now;
+            logger.i('🕐 Iniciando sesión offline desde ${_screenOffStartTime!.toIso8601String()}');
           }
-          _lastCheckTime = now;
+
+          final offlineDuration = now.difference(_screenOffStartTime!);
+          logger.i('🔒 PANTALLA BLOQUEADA: ${offlineDuration.inMinutes}m de tiempo sin usar');
+
+          if (offlineDuration.inMinutes >= 4) {
+            logger.d('⏳ Offline acumulado >= 4m. Se aplicará energía al desbloquear para contar toda la sesión.');
+          } else {
+            logger.d('⏳ Pantalla bloqueada pero menos de 4 minutos (${offlineDuration.inMinutes}m). Acumulando...');
+          }
           return;
+        } else {
+          // Pantalla encendida: cerrar sesión offline y aplicar energía una sola vez.
+          if (_wasScreenOff && _screenOffStartTime != null) {
+            final totalOfflineDuration = now.difference(_screenOffStartTime!);
+            if (totalOfflineDuration.inMinutes >= 4) {
+              logger.w('✅ OFFLINE COMPLETADO (pantalla se encendió) - Disparando callback con ${totalOfflineDuration.inMinutes}m');
+              _onOfflineDetected.forEach((cb) {
+                logger.i('↪️ Ejecutando callback offline (sesión completa al desbloquear)');
+                cb(totalOfflineDuration);
+              });
+            } else {
+              logger.d('ℹ️ Pantalla se encendió, pero el tiempo offline fue < 4m (${totalOfflineDuration.inMinutes}m).');
+            }
+          }
+
+          _wasScreenOff = false;
+          _screenOffStartTime = null;
+          _lastCheckTime = now;
         }
       } on PlatformException catch (e) {
         logger.e('⚠️ Error verificando pantalla: ${e.message}');
@@ -102,47 +136,86 @@ class ScreenTimeMonitor {
 
       // Si pantalla está encendida, obtener estadísticas de apps
       try {
-        final stats = await platform.invokeMethod<Map>('getScreenStats', {
-          'startTime': 0, // Obtener TODO el historial disponible
-          'endTime': now.millisecondsSinceEpoch,
-        });
-
-        if (stats == null || stats.isEmpty) {
-          logger.w('⚠️ No se obtuvieron estadísticas de pantalla');
+        // Verificar que hay apps distractoras configuradas
+        if (_distractingApps.isEmpty) {
+          logger.d('ℹ️ Sin apps distractoras configuradas. Saltando monitoreo.');
           _lastCheckTime = now;
           return;
         }
 
+        logger.d('📲 Llamando a getScreenStats...');
+        final statsJson = await platform.invokeMethod<String>('getScreenStats', {
+          'startTime': 0, // Obtener TODO el historial disponible
+          'endTime': now.millisecondsSinceEpoch,
+        });
+
+        if (statsJson == null || statsJson.isEmpty || statsJson == '{}') {
+          logger.d('📊 No hay estadísticas disponibles en este período');
+          _lastCheckTime = now;
+          return;
+        }
+
+        // Parsear JSON
+        final Map<String, dynamic> statsMap = jsonDecode(statsJson);
+
         bool anyDistractionDetected = false;
         
+        logger.i('📊 Estadísticas recibidas: ${statsMap.length} apps');
+        logger.i('🎯 Apps distractoras a detectar: $_distractingApps');
+        
         // Procesar datos: solo contar el incremento desde el último checkpoint
-        for (var entry in stats.entries) {
-          final packageName = entry.key as String;
-          final currentTotalUsage = entry.value as int? ?? 0;
+        for (var entry in statsMap.entries) {
+          final packageName = entry.key;
+          
+          // Convertir el valor a num (viene como String desde Kotlin)
+          num currentTotalUsage = 0;
+          try {
+            final value = entry.value;
+            if (value == null) {
+              continue;
+            } else if (value is int) {
+              currentTotalUsage = value;
+            } else if (value is double) {
+              currentTotalUsage = value.toInt();
+            } else if (value is String) {
+              currentTotalUsage = int.tryParse(value) ?? 0;
+            } else if (value is num) {
+              currentTotalUsage = value;
+            }
+          } catch (e) {
+            logger.e('❌ Error convirtiendo valor para $packageName: ${entry.value} (${entry.value.runtimeType}), error: $e');
+            continue;
+          }
+
+          // Solo procesar si es app distractora
+          if (!isAppDistracting(packageName)) {
+            continue;
+          }
+
+          logger.d('🔍 Chequeando app distractora: $packageName, uso total: ${currentTotalUsage}ms');
 
           // Obtener el checkpoint anterior (0 si es la primera vez)
           final lastKnownUsage = _screenTimeCheckpoints[packageName] ?? 0;
           
           // Calcular el NUEVO tiempo usado desde el último checkpoint
-          final newUsage = currentTotalUsage - lastKnownUsage;
+          final newUsage = (currentTotalUsage - lastKnownUsage).toInt();
 
           if (newUsage > 0) {
             final newUsageDuration = Duration(milliseconds: newUsage);
 
-            // Solo procesar si es app distractora
-            if (isAppDistracting(packageName) && newUsageDuration.inSeconds > 0) {
-              logger.w('📱 App distractora: $packageName - ${newUsageDuration.inMinutes}m nuevos');
+            if (newUsageDuration.inSeconds > 0) {
+              logger.w('📱 ¡DISTRACCIÓN DETECTADA! $packageName: ${newUsageDuration.inMinutes}m nuevos (checkpoint: ${lastKnownUsage}ms → actual: ${currentTotalUsage}ms)');
               _onDistractionDetected.forEach((cb) => cb(packageName, newUsageDuration));
               anyDistractionDetected = true;
             }
 
             // Actualizar checkpoint al valor actual total
-            _screenTimeCheckpoints[packageName] = currentTotalUsage;
+            _screenTimeCheckpoints[packageName] = currentTotalUsage.toInt();
           }
         }
 
         if (!anyDistractionDetected) {
-          logger.i('📊 Sin uso de apps distractoras en este período');
+          logger.d('✔️ Sin distracción detectada en este período');
         }
       } on PlatformException catch (e) {
         logger.e('❌ Error llamando método nativo: ${e.message}');
@@ -160,20 +233,28 @@ class ScreenTimeMonitor {
     required DateTime endTime,
   }) async {
     try {
-      final stats = await platform.invokeMethod<Map>('getScreenStats', {
+      final statsJson = await platform.invokeMethod<String>('getScreenStats', {
         'startTime': startTime.millisecondsSinceEpoch,
         'endTime': endTime.millisecondsSinceEpoch,
       });
 
-      if (stats == null) return [];
+      if (statsJson == null || statsJson.isEmpty || statsJson == '{}') {
+        return [];
+      }
+
+      final Map<String, dynamic> stats = jsonDecode(statsJson);
 
       return stats.entries
           .map((entry) => AppUsageData(
-                packageName: entry.key as String,
-                appName: entry.key as String,
-                usageTime: Duration(milliseconds: entry.value as int? ?? 0),
+                packageName: entry.key,
+                appName: entry.key,
+                usageTime: Duration(
+                  milliseconds: entry.value is num
+                      ? (entry.value as num).toInt()
+                      : int.tryParse(entry.value.toString()) ?? 0,
+                ),
                 lastTimeUsed: DateTime.now(),
-                isDistracting: isAppDistracting(entry.key as String),
+                isDistracting: isAppDistracting(entry.key),
               ))
           .toList();
     } catch (e) {

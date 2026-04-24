@@ -65,6 +65,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ] else ...[
                   _ReviveButton(petProvider: petProvider),
                 ],
+                const SizedBox(height: 30),
+                // DEBUG WIDGET
+                _DebugAppsWidget(petProvider: petProvider),
               ],
             ),
           );
@@ -193,6 +196,62 @@ class _ReviveButton extends StatelessWidget {
     return ElevatedButton(
       onPressed: () => petProvider.revivePet(),
       child: const Text('Revivir Mascota'),
+    );
+  }
+}
+
+class _DebugAppsWidget extends StatelessWidget {
+  final PetProvider petProvider;
+  const _DebugAppsWidget({super.key, required this.petProvider});
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpansionTile(
+      title: const Text('🔧 DEBUG: Apps Monitoreadas'),
+      subtitle: Text('${petProvider.distractingApps.length} apps seleccionadas'),
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Apps configuradas (${petProvider.distractingApps.length}):',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              if (petProvider.distractingApps.isEmpty)
+                const Text('❌ Ninguna app seleccionada')
+              else
+                ...petProvider.distractingApps.map((pkg) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text('  • $pkg'),
+                )),
+              const SizedBox(height: 16),
+              Text(
+                'Apps usadas en sesión (${petProvider.distractingAppsUsed.length}):',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              if (petProvider.distractingAppsUsed.isEmpty)
+                const Text('Ninguna detectada')
+              else
+                ...petProvider.distractingAppsUsed.map((pkg) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text('  ✓ $pkg'),
+                )),
+              const SizedBox(height: 16),
+              Text(
+                'Estadísticas:',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text('  Tiempo en apps: ${petProvider.sessionScreenTime.inMinutes}m'),
+              Text('  Tiempo offline: ${petProvider.sessionOfflineTime.inMinutes}m'),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

@@ -20,6 +20,11 @@ class PetProvider extends ChangeNotifier {
   Timer? _syncTimer;
 
   List<String> _distractingApps = [];
+  
+  // Session statistics tracking
+  Duration _sessionOfflineTime = Duration.zero;
+  Duration _sessionScreenTime = Duration.zero;
+  Set<String> _distractingAppsUsedInSession = {};
 
   Pet get pet => _pet;
   bool get isInitialized => _isInitialized;
@@ -27,20 +32,11 @@ class PetProvider extends ChangeNotifier {
   List<String> get distractingApps => _distractingApps;
   
   // Getters for session statistics
-  Duration get sessionOfflineTime {
-    final mins = SharedPreferences.getInstance().then(
-      (prefs) => prefs.getInt('session_offline_time') ?? 0,
-    );
-    return Duration(minutes: 0); // Placeholder
-  }
+  Duration get sessionOfflineTime => _sessionOfflineTime;
   
-  Duration get sessionScreenTime {
-    return Duration(minutes: 0); // Placeholder
-  }
+  Duration get sessionScreenTime => _sessionScreenTime;
   
-  List<String> get distractingAppsUsed {
-    return []; // Placeholder
-  }
+  List<String> get distractingAppsUsed => _distractingAppsUsedInSession.toList();
   
   Future<bool> isScreenOn() async {
     return true; // Placeholder - siempre true
@@ -64,20 +60,43 @@ class PetProvider extends ChangeNotifier {
       _screenTimeMonitor = ScreenTimeMonitor();
       _screenTimeMonitor.loadCheckpoints(_pet.screenTimeCheckpoints);
       
+      // 🔑 CRUCIAL: Pasar las apps distractoras seleccionadas al monitor
+      _screenTimeMonitor.setDistractionApps(_distractingApps);
+      logger.i('📲 Apps distractoras sincronizadas: ${_distractingApps.length}');
+      
       // Conectar callbacks
       _screenTimeMonitor.onDistractionDetected((packageName, screenTime) async {
-        logger.w('🚨 Distracción detectada: $packageName (${screenTime.inMinutes}m)');
-        _pet.energy = (_pet.energy - 5).clamp(0, 100);
+        logger.w('🚨 ¡CALLBACK DISTRACCIÓN! $packageName (${screenTime.inMinutes}m ${screenTime.inSeconds % 60}s)');
+        
+        // Actualizar estadísticas de sesión
+        _sessionScreenTime += screenTime;
+        _distractingAppsUsedInSession.add(packageName);
+        
+        // Reducir energía: -1 por cada 5 minutos de uso
+        final energyPenalty = (screenTime.inMinutes / 5).ceil();
+        final oldEnergy = _pet.energy;
+        _pet.energy = (_pet.energy - energyPenalty).clamp(0, 100);
+        logger.w('⚡ Energía reducida: $oldEnergy → ${_pet.energy} (-$energyPenalty por ${screenTime.inMinutes}m uso)');
+        
         _pet.lastScreenTimeCheckpoint = DateTime.now();
         await _storageService.savePet(_pet);
         notifyListeners();
       });
 
       _screenTimeMonitor.onOfflineDetected((offlineTime) async {
-        logger.i('✅ Tiempo offline detectado: ${offlineTime.inMinutes}m');
-        // 4 minutos offline = 2 puntos de energía
-        final energyGain = (offlineTime.inMinutes / 4 * 2).toInt();
+        logger.i('✅ CALLBACK OFFLINE DETECTADO: ${offlineTime.inMinutes}m ${offlineTime.inSeconds % 60}s');
+        
+        // Actualizar estadísticas de sesión
+        _sessionOfflineTime += offlineTime;
+        
+        // Fórmula proporcional: (tiempoOffline/4) * 2
+        // Se calcula con segundos para mayor precisión temporal.
+        final energyGain = ((offlineTime.inSeconds / 240) * 2).toInt();
+        final oldEnergy = _pet.energy;
         _pet.energy = (_pet.energy + energyGain).clamp(0, 100);
+        logger.i('⚡ ENERGÍA AUMENTADA: $oldEnergy → ${_pet.energy} (+$energyGain por ${offlineTime.inMinutes}m ${offlineTime.inSeconds % 60}s offline)');
+        logger.i('💾 Guardando... (offline time: ${_sessionOfflineTime.inMinutes}m acumulados en sesión)');
+        
         _pet.lastScreenTimeCheckpoint = DateTime.now();
         await _storageService.savePet(_pet);
         notifyListeners();
@@ -132,6 +151,10 @@ class PetProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(AppConstants.distractingAppsKey, packages);
     
+    // 🔑 CRUCIAL: Actualizar la lista en ScreenTimeMonitor en tiempo real
+    _screenTimeMonitor.setDistractionApps(packages);
+    logger.i('🎯 Apps distractoras actualizadas en monitor: ${packages.length}');
+    
     await ServiceManager.stopService();
     await ServiceManager.startService();
     
@@ -161,7 +184,18 @@ class PetProvider extends ChangeNotifier {
   Future<void> resetPet() async {
     await _storageService.clear();
     _pet = Pet();
+    _sessionOfflineTime = Duration.zero;
+    _sessionScreenTime = Duration.zero;
+    _distractingAppsUsedInSession.clear();
     await _storageService.savePet(_pet);
+    notifyListeners();
+  }
+  
+  /// Resetear estadísticas de sesión (para nuevo día)
+  void resetSessionStats() {
+    _sessionOfflineTime = Duration.zero;
+    _sessionScreenTime = Duration.zero;
+    _distractingAppsUsedInSession.clear();
     notifyListeners();
   }
 

@@ -1,5 +1,6 @@
 import 'package:permission_handler/permission_handler.dart';
 import 'package:logger/logger.dart';
+import 'package:flutter/services.dart';
 // import 'package:usage_stats/usage_stats.dart';  // Temporarily disabled
 import 'dart:io';
 
@@ -7,6 +8,7 @@ final logger = Logger();
 
 class PermissionsService {
   static final PermissionsService _instance = PermissionsService._internal();
+  static const platform = MethodChannel('com.example.offline/screen_time');
 
   factory PermissionsService() {
     return _instance;
@@ -57,7 +59,23 @@ class PermissionsService {
   /// Check if Usage Access permission is enabled
   Future<bool> isUsageAccessEnabled() async {
     try {
-      logger.i('⏸️ isUsageAccessEnabled deshabilitado - usage_stats no disponible');
+      if (!Platform.isAndroid) {
+        logger.i('ℹ️ Plataforma no Android - permisos no aplicables');
+        return false;
+      }
+
+      // Llamar al método nativo Android para verificar si tiene acceso a estadísticas
+      final result = await platform.invokeMethod<bool>('hasUsageAccess');
+      final hasAccess = result ?? false;
+
+      if (hasAccess) {
+        logger.i('✅ Acceso a estadísticas de uso OTORGADO');
+      } else {
+        logger.w('⚠️ Acceso a estadísticas de uso NO OTORGADO - Usuario debe otorgar en Ajustes');
+      }
+      return hasAccess;
+    } on PlatformException catch (e) {
+      logger.e('❌ Error verificando acceso a estadísticas: ${e.message}');
       return false;
     } catch (e) {
       logger.e('Error checking usage access: $e');

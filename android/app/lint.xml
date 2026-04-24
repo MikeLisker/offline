@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Ignore missing resources from usage_stats -->
+    <issue id="MissingDimen" severity="ignore" />
+    <issue id="MissingColorResource" severity="ignore" />
+    <issue id="MissingAttr" severity="ignore" />
+</lint>

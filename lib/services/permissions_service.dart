@@ -69,9 +69,14 @@ class PermissionsService {
       final hasAccess = result ?? false;
 
       if (hasAccess) {
-        logger.i('✅ Acceso a estadísticas de uso OTORGADO');
+        logger.i('✅ Acceso a estadísticas de uso OTORGADO ✓');
       } else {
-        logger.w('⚠️ Acceso a estadísticas de uso NO OTORGADO - Usuario debe otorgar en Ajustes');
+        logger.w('⚠️ ¡PERMISO REQUERIDO! Acceso a estadísticas de uso NO OTORGADO');
+        logger.w('📱 Para habilitar:');
+        logger.w('   1. Abre Configuración');
+        logger.w('   2. Ve a Aplicaciones especiales (o similar según tu dispositivo)');
+        logger.w('   3. Busca "Acceso de estadísticas de uso" o "Usage Stats"');
+        logger.w('   4. Activa "Offline" o esta aplicación');
       }
       return hasAccess;
     } on PlatformException catch (e) {

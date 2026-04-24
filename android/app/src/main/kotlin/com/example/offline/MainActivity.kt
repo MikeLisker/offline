@@ -27,8 +27,10 @@ class MainActivity : FlutterActivity() {
                     try {
                         val startTime = argumentAsLong(call, "startTime", 0L)
                         val endTime = argumentAsLong(call, "endTime", System.currentTimeMillis())
+                        @Suppress("UNCHECKED_CAST")
+                        val distractingApps = call.argument<List<String>>("distractingApps") ?: emptyList()
                         
-                        val statsJson = getScreenTimeStatsJson(startTime, endTime)
+                        val statsJson = getScreenTimeStatsJson(startTime, endTime, distractingApps)
                         result.success(statsJson)
                     } catch (e: Exception) {
                         result.error("ERROR", e.message, null)
@@ -58,6 +60,26 @@ class MainActivity : FlutterActivity() {
                         result.error("ERROR", e.message, null)
                     }
                 }
+                "startScreenTimeService" -> {
+                    try {
+                        startService(Intent(this, ScreenTimeService::class.java))
+                        android.util.Log.d("OfflineApp", "✅ Servicio de monitoreo iniciado")
+                        result.success(true)
+                    } catch (e: Exception) {
+                        android.util.Log.e("OfflineApp", "❌ Error iniciando servicio: ${e.message}")
+                        result.error("ERROR", e.message, null)
+                    }
+                }
+                "stopScreenTimeService" -> {
+                    try {
+                        stopService(Intent(this, ScreenTimeService::class.java))
+                        android.util.Log.d("OfflineApp", "🛑 Servicio de monitoreo detenido")
+                        result.success(true)
+                    } catch (e: Exception) {
+                        android.util.Log.e("OfflineApp", "❌ Error deteniendo servicio: ${e.message}")
+                        result.error("ERROR", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -75,13 +97,13 @@ class MainActivity : FlutterActivity() {
     }
 
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
-    private fun getScreenTimeStatsJson(startTime: Long, endTime: Long): String {
+    private fun getScreenTimeStatsJson(startTime: Long, endTime: Long, distractingApps: List<String>): String {
         val statsMap = mutableMapOf<String, String>()
         
         try {
             // Verificar permisos
             if (!hasUsageAccessPermission()) {
-                android.util.Log.w("OfflineApp", "Sin permisos de uso_stats")
+                android.util.Log.w("OfflineApp", "Sin permisos de usage_stats")
                 return "{}"
             }
 
@@ -91,7 +113,7 @@ class MainActivity : FlutterActivity() {
                 return "{}"
             }
 
-            android.util.Log.d("OfflineApp", "Consultando estadísticas de uso...")
+            android.util.Log.d("OfflineApp", "Consultando estadísticas de uso (${distractingApps.size} apps distractoras filtradas)...")
             
             // Obtener estadísticas de uso
             val stats = usageStatsManager.queryUsageStats(
@@ -100,19 +122,24 @@ class MainActivity : FlutterActivity() {
                 endTime
             )
 
-            android.util.Log.d("OfflineApp", "Se encontraron ${stats.size} apps con estadísticas")
+            android.util.Log.d("OfflineApp", "Se encontraron ${stats.size} apps totales en el sistema")
             
             for (stat in stats) {
                 val packageName = stat.packageName
-                val foregroundTime: Long = stat.totalTimeInForeground  // Explícitamente Long
+                val foregroundTime: Long = stat.totalTimeInForeground
                 
-                if (foregroundTime > 0) {
+                // SOLO incluir si es una app distractora configurada
+                val isDistracting = distractingApps.any { packageName.contains(it) }
+                
+                if (isDistracting && foregroundTime > 0) {
                     statsMap[packageName] = foregroundTime.toString()
-                    android.util.Log.d("OfflineApp", "App: $packageName, Tiempo: ${foregroundTime}ms")
+                    android.util.Log.d("OfflineApp", "✓ App distractora: $packageName, Tiempo: ${foregroundTime}ms")
+                } else if (foregroundTime > 0) {
+                    android.util.Log.d("OfflineApp", "✗ App ignorada (no distractora): $packageName")
                 }
             }
             
-            android.util.Log.d("OfflineApp", "Retornando ${statsMap.size} apps con uso")
+            android.util.Log.d("OfflineApp", "✓ Retornando ${statsMap.size} apps distractoras con uso")
         } catch (e: Exception) {
             android.util.Log.e("OfflineApp", "Error en getScreenTimeStats: ${e.message}")
             e.printStackTrace()

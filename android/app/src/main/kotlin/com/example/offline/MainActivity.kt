@@ -62,7 +62,12 @@ class MainActivity : FlutterActivity() {
                 }
                 "startScreenTimeService" -> {
                     try {
-                        startService(Intent(this, ScreenTimeService::class.java))
+                        val serviceIntent = Intent(this, ScreenTimeService::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(serviceIntent)
+                        } else {
+                            startService(serviceIntent)
+                        }
                         android.util.Log.d("OfflineApp", "✅ Servicio de monitoreo iniciado")
                         result.success(true)
                     } catch (e: Exception) {
@@ -80,9 +85,39 @@ class MainActivity : FlutterActivity() {
                         result.error("ERROR", e.message, null)
                     }
                 }
+                "consumePendingOfflineDurationMs" -> {
+                    try {
+                        val value = consumePendingOfflineDurationMs()
+                        result.success(value)
+                    } catch (e: Exception) {
+                        result.error("ERROR", e.message, null)
+                    }
+                }
+                "getPendingOfflineDurationMs" -> {
+                    try {
+                        val value = getPendingOfflineDurationMs()
+                        result.success(value)
+                    } catch (e: Exception) {
+                        result.error("ERROR", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun getPendingOfflineDurationMs(): Long {
+        val prefs = getSharedPreferences(ScreenTimeService.PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getLong(ScreenTimeService.KEY_PENDING_OFFLINE_MS, 0L)
+    }
+
+    private fun consumePendingOfflineDurationMs(): Long {
+        val prefs = getSharedPreferences(ScreenTimeService.PREFS_NAME, Context.MODE_PRIVATE)
+        val pending = prefs.getLong(ScreenTimeService.KEY_PENDING_OFFLINE_MS, 0L)
+        if (pending > 0L) {
+            prefs.edit().putLong(ScreenTimeService.KEY_PENDING_OFFLINE_MS, 0L).apply()
+        }
+        return pending
     }
 
     private fun argumentAsLong(call: MethodCall, key: String, defaultValue: Long): Long {
@@ -99,6 +134,7 @@ class MainActivity : FlutterActivity() {
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     private fun getScreenTimeStatsJson(startTime: Long, endTime: Long, distractingApps: List<String>): String {
         val statsMap = mutableMapOf<String, String>()
+        val distractingSet = distractingApps.map { it.trim().lowercase() }.toSet()
         
         try {
             // Verificar permisos
@@ -129,7 +165,7 @@ class MainActivity : FlutterActivity() {
                 val foregroundTime: Long = stat.totalTimeInForeground
                 
                 // SOLO incluir si es una app distractora configurada
-                val isDistracting = distractingApps.any { packageName.contains(it) }
+                val isDistracting = distractingSet.contains(packageName.lowercase())
                 
                 if (isDistracting && foregroundTime > 0) {
                     statsMap[packageName] = foregroundTime.toString()

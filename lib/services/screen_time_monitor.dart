@@ -11,7 +11,6 @@ class ScreenTimeMonitor {
 
   DateTime? _lastCheckTime;
   DateTime? _screenOffStartTime;
-  DateTime? _lastOfflineCallbackTime;  // Rastrear cuándo fue el último callback offline
   bool _wasScreenOff = false;
   Timer? _monitorTimer;
   final List<Function(Duration offlineTime)> _onOfflineDetected = [];
@@ -31,39 +30,12 @@ class ScreenTimeMonitor {
     _screenOffStartTime = null;
     _wasScreenOff = false;
 
-    // ✅ Iniciar servicio de foreground en Android para mantener monitoreo activo
-    _startAndroidService();
-
     _monitorTimer = Timer.periodic(CHECK_INTERVAL, (_) {
       _checkScreenTime();
     });
     
     // Hacer una verificación inmediata después de 1 segundo
     Future.delayed(Duration(seconds: 1), _checkScreenTime);
-  }
-
-  /// Iniciar servicio de foreground en Android
-  Future<void> _startAndroidService() async {
-    try {
-      final result = await platform.invokeMethod<bool>('startScreenTimeService');
-      if (result == true) {
-        logger.i('✅ Servicio de foreground iniciado correctamente');
-      }
-    } catch (e) {
-      logger.e('❌ Error iniciando servicio: $e');
-    }
-  }
-
-  /// Detener servicio de foreground en Android
-  Future<void> _stopAndroidService() async {
-    try {
-      final result = await platform.invokeMethod<bool>('stopScreenTimeService');
-      if (result == true) {
-        logger.i('✅ Servicio de foreground detenido correctamente');
-      }
-    } catch (e) {
-      logger.e('❌ Error deteniendo servicio: $e');
-    }
   }
 
   /// Cargar checkpoints desde storage
@@ -76,15 +48,44 @@ class ScreenTimeMonitor {
   /// Obtener checkpoints actuales (para guardar)
   Map<String, int> getCheckpoints() => Map.from(_screenTimeCheckpoints);
 
+  /// Reinicia baseline de apps distractoras al uso actual total para evitar
+  /// contar tiempo histórico previo a la selección del usuario.
+  Future<void> resetDistractingAppsBaselines() async {
+    if (_distractingApps.isEmpty) return;
+
+    try {
+      final now = DateTime.now();
+      final statsJson = await platform.invokeMethod<String>('getScreenStats', {
+        'startTime': 0,
+        'endTime': now.millisecondsSinceEpoch,
+        'distractingApps': _distractingApps,
+      });
+
+      if (statsJson == null || statsJson.isEmpty || statsJson == '{}') {
+        for (final pkg in _distractingApps) {
+          _screenTimeCheckpoints[pkg] = 0;
+        }
+        logger.i('🧭 Baseline distractoras reiniciado en 0 (sin stats nativas)');
+        return;
+      }
+
+      final Map<String, dynamic> statsMap = jsonDecode(statsJson);
+      for (final pkg in _distractingApps) {
+        final raw = statsMap[pkg];
+        _screenTimeCheckpoints[pkg] = _parseTimeToInt(raw);
+      }
+
+      logger.i('🧭 Baseline distractoras actualizado para ${_distractingApps.length} apps');
+    } catch (e) {
+      logger.e('❌ Error reiniciando baseline de distractoras: $e');
+    }
+  }
+
   /// Detener monitoreo
   void stopMonitoring() {
     _monitorTimer?.cancel();
     _screenOffStartTime = null;
     _wasScreenOff = false;
-    
-    // ✅ Detener servicio de foreground en Android
-    _stopAndroidService();
-    
     logger.i('🛑 Monitoreo detenido');
   }
 
@@ -121,8 +122,25 @@ class ScreenTimeMonitor {
       final now = DateTime.now();
       final timeSinceLastCheck = now.difference(_lastCheckTime!);
 
-      // Primero, verificar si pantalla está apagada (offline)
+      // Primero, consumir offline acumulado en nativo (exacto para dispositivos físicos).
       try {
+        final pendingOfflineMs =
+            await platform.invokeMethod<int>('consumePendingOfflineDurationMs') ?? 0;
+        if (pendingOfflineMs > 0) {
+          final offlineDuration = Duration(milliseconds: pendingOfflineMs);
+          logger.w('✅ OFFLINE NATIVO CONSUMIDO: ${offlineDuration.inMinutes}m ${offlineDuration.inSeconds % 60}s');
+          _onOfflineDetected.forEach((cb) {
+            logger.i('↪️ Ejecutando callback offline (nativo)');
+            cb(offlineDuration);
+          });
+
+          // Evitar doble conteo si también veníamos con estado local de pantalla apagada.
+          _wasScreenOff = false;
+          _screenOffStartTime = null;
+          _lastCheckTime = now;
+        }
+
+        // Además, verificar estado de pantalla para logs/fallback.
         final isScreenOn = await platform.invokeMethod<bool>('isScreenOn') ?? false;
         logger.d('📱 Estado pantalla: ${isScreenOn ? "ENCENDIDA" : "APAGADA"}, tiempo desde último check: ${timeSinceLastCheck.inMinutes}m ${timeSinceLastCheck.inSeconds % 60}s');
         
@@ -131,50 +149,28 @@ class ScreenTimeMonitor {
           if (!_wasScreenOff) {
             _wasScreenOff = true;
             _screenOffStartTime = _lastCheckTime ?? now;
-            _lastOfflineCallbackTime = now;  // Inicializar tracking de callbacks
             logger.i('🕐 Iniciando sesión offline desde ${_screenOffStartTime!.toIso8601String()}');
           }
 
           final offlineDuration = now.difference(_screenOffStartTime!);
-          final timeSinceLastCallback = now.difference(_lastOfflineCallbackTime!);
-          
           logger.i('🔒 PANTALLA BLOQUEADA: ${offlineDuration.inMinutes}m de tiempo sin usar');
 
-          // ✅ NUEVO: Disparar callback automáticamente cada 4+ minutos de pantalla apagada
-          // (No esperar a que la pantalla se encienda)
-          if (offlineDuration.inMinutes >= 4 && timeSinceLastCallback.inMinutes >= 4) {
-            logger.w('⏱️ 4+ MINUTOS OFFLINE ACUMULADOS - Disparando callback automáticamente');
-            _onOfflineDetected.forEach((cb) {
-              logger.i('↪️ Ejecutando callback offline (sesión de ${offlineDuration.inMinutes}m detectada)');
-              cb(offlineDuration);
-            });
-            
-            // Resetear para contar los próximos 4 minutos
-            _screenOffStartTime = now;
-            _lastOfflineCallbackTime = now;
-            logger.i('🔄 Iniciando nueva sesión offline para próximas métricas');
-          } else if (offlineDuration.inMinutes >= 4) {
-            logger.d('⏳ Offline acumulado >= 4m. Próximo callback en ${4 - timeSinceLastCallback.inMinutes}m');
+          if (offlineDuration.inMinutes >= 4) {
+            logger.d('⏳ Offline acumulado >= 4m. Se aplicará energía al desbloquear para contar toda la sesión.');
           } else {
             logger.d('⏳ Pantalla bloqueada pero menos de 4 minutos (${offlineDuration.inMinutes}m). Acumulando...');
           }
           return;
         } else {
-          // Pantalla encendida: cerrar sesión offline
+          // Pantalla encendida: cerrar sesión offline y aplicar energía una sola vez.
           if (_wasScreenOff && _screenOffStartTime != null) {
             final totalOfflineDuration = now.difference(_screenOffStartTime!);
-            
-            // Solo disparar callback si han pasado 4+ minutos DESDE EL ÚLTIMO CALLBACK
-            // (para evitar duplicados)
-            final timeSinceLastCallback = now.difference(_lastOfflineCallbackTime!);
-            if (timeSinceLastCallback.inMinutes >= 4 && totalOfflineDuration.inMinutes >= 4) {
+            if (totalOfflineDuration.inMinutes >= 4) {
               logger.w('✅ OFFLINE COMPLETADO (pantalla se encendió) - Disparando callback con ${totalOfflineDuration.inMinutes}m');
               _onOfflineDetected.forEach((cb) {
                 logger.i('↪️ Ejecutando callback offline (sesión completa al desbloquear)');
                 cb(totalOfflineDuration);
               });
-            } else if (totalOfflineDuration.inMinutes >= 4) {
-              logger.d('ℹ️ Pantalla se encendió. Offline acumulado: ${totalOfflineDuration.inMinutes}m (últimos ${timeSinceLastCallback.inMinutes}m desde último callback)');
             } else {
               logger.d('ℹ️ Pantalla se encendió, pero el tiempo offline fue < 4m (${totalOfflineDuration.inMinutes}m).');
             }
@@ -182,7 +178,7 @@ class ScreenTimeMonitor {
 
           _wasScreenOff = false;
           _screenOffStartTime = null;
-          _lastOfflineCallbackTime = null;
+          _lastCheckTime = now;
         }
       } on PlatformException catch (e) {
         logger.e('⚠️ Error verificando pantalla: ${e.message}');
@@ -197,19 +193,15 @@ class ScreenTimeMonitor {
           return;
         }
 
-        logger.d('📲 Llamando a getScreenStats con ${_distractingApps.length} apps distractoras...');
+        logger.d('📲 Llamando a getScreenStats...');
         final statsJson = await platform.invokeMethod<String>('getScreenStats', {
           'startTime': 0, // Obtener TODO el historial disponible
           'endTime': now.millisecondsSinceEpoch,
-          'distractingApps': _distractingApps,  // ✅ Pasar lista de apps al nativo
+          'distractingApps': _distractingApps,
         });
 
         if (statsJson == null || statsJson.isEmpty || statsJson == '{}') {
-          logger.w('⚠️ SIN DATOS de estadísticas. Esto puede significar:');
-          logger.w('   1️⃣ No tienes permiso de "Estadísticas de uso" habilitado');
-          logger.w('   2️⃣ No hay uso de apps en este período');
-          logger.w('   3️⃣ Las apps distractoras configuradas no tienen uso registrado');
-          logger.w('   📱 Permiso requerido: Configuración → Aplicaciones especiales → Acceso estadísticas uso');
+          logger.d('📊 No hay estadísticas disponibles en este período');
           _lastCheckTime = now;
           return;
         }
@@ -295,7 +287,7 @@ class ScreenTimeMonitor {
       final statsJson = await platform.invokeMethod<String>('getScreenStats', {
         'startTime': startTime.millisecondsSinceEpoch,
         'endTime': endTime.millisecondsSinceEpoch,
-        'distractingApps': _distractingApps,  // ✅ Pasar lista de apps al nativo
+        'distractingApps': _distractingApps,
       });
 
       if (statsJson == null || statsJson.isEmpty || statsJson == '{}') {

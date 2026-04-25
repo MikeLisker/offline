@@ -25,6 +25,8 @@ class PetProvider extends ChangeNotifier {
   Duration _sessionOfflineTime = Duration.zero;
   Duration _sessionScreenTime = Duration.zero;
   Set<String> _distractingAppsUsedInSession = {};
+  int _sessionDistractingSeconds = 0;
+  int _sessionDistractingPenaltyApplied = 0;
 
   Pet get pet => _pet;
   bool get isInitialized => _isInitialized;
@@ -62,6 +64,9 @@ class PetProvider extends ChangeNotifier {
       
       // 🔑 CRUCIAL: Pasar las apps distractoras seleccionadas al monitor
       _screenTimeMonitor.setDistractionApps(_distractingApps);
+      await _screenTimeMonitor.resetDistractingAppsBaselines();
+      _pet.screenTimeCheckpoints = _screenTimeMonitor.getCheckpoints();
+      await _storageService.savePet(_pet);
       logger.i('📲 Apps distractoras sincronizadas: ${_distractingApps.length}');
       
       // Conectar callbacks
@@ -72,11 +77,21 @@ class PetProvider extends ChangeNotifier {
         _sessionScreenTime += screenTime;
         _distractingAppsUsedInSession.add(packageName);
         
-        // Reducir energía: -1 por cada 5 minutos de uso
-        final energyPenalty = (screenTime.inMinutes / 5).ceil();
+        // Mecánica solicitada: cada 5 minutos acumulados de distractoras = -2 energía.
+        // Se acumula en segundos para no depender de "rangos" por callback.
+        _sessionDistractingSeconds += screenTime.inSeconds;
+        final totalPenaltyShouldBe = ((_sessionDistractingSeconds / 300) * 2).floor();
+        final energyPenalty = totalPenaltyShouldBe - _sessionDistractingPenaltyApplied;
+        _sessionDistractingPenaltyApplied = totalPenaltyShouldBe;
+
+        if (energyPenalty <= 0) {
+          logger.i('⏳ Distracción acumulada: ${_sessionDistractingSeconds}s, aún sin penalización nueva');
+          return;
+        }
+
         final oldEnergy = _pet.energy;
         _pet.energy = (_pet.energy - energyPenalty).clamp(0, 100);
-        logger.w('⚡ Energía reducida: $oldEnergy → ${_pet.energy} (-$energyPenalty por ${screenTime.inMinutes}m uso)');
+        logger.w('⚡ Energía reducida: $oldEnergy → ${_pet.energy} (-$energyPenalty por ${_sessionDistractingSeconds}s distractoras acumulados)');
         
         _pet.lastScreenTimeCheckpoint = DateTime.now();
         await _storageService.savePet(_pet);
@@ -89,12 +104,14 @@ class PetProvider extends ChangeNotifier {
         // Actualizar estadísticas de sesión
         _sessionOfflineTime += offlineTime;
         
-        // Fórmula proporcional: (tiempoOffline/4) * 2
-        // Se calcula con segundos para mayor precisión temporal.
-        final energyGain = ((offlineTime.inSeconds / 240) * 2).toInt();
+        // Fórmula solicitada:
+        // Punto1 = TiempoOffline(min) / 4
+        // PuntoOffline = Punto1 * 2
+        final punto1 = offlineTime.inMinutes ~/ 4;
+        final energyGain = punto1 * 2;
         final oldEnergy = _pet.energy;
         _pet.energy = (_pet.energy + energyGain).clamp(0, 100);
-        logger.i('⚡ ENERGÍA AUMENTADA: $oldEnergy → ${_pet.energy} (+$energyGain por ${offlineTime.inMinutes}m ${offlineTime.inSeconds % 60}s offline)');
+        logger.i('⚡ ENERGÍA AUMENTADA: $oldEnergy → ${_pet.energy} (+$energyGain por ${offlineTime.inMinutes}m offline; punto1=$punto1)');
         logger.i('💾 Guardando... (offline time: ${_sessionOfflineTime.inMinutes}m acumulados en sesión)');
         
         _pet.lastScreenTimeCheckpoint = DateTime.now();
@@ -153,6 +170,11 @@ class PetProvider extends ChangeNotifier {
     
     // 🔑 CRUCIAL: Actualizar la lista en ScreenTimeMonitor en tiempo real
     _screenTimeMonitor.setDistractionApps(packages);
+    await _screenTimeMonitor.resetDistractingAppsBaselines();
+    _pet.screenTimeCheckpoints = _screenTimeMonitor.getCheckpoints();
+    await _storageService.savePet(_pet);
+    _sessionDistractingSeconds = 0;
+    _sessionDistractingPenaltyApplied = 0;
     logger.i('🎯 Apps distractoras actualizadas en monitor: ${packages.length}');
     
     await ServiceManager.stopService();
@@ -196,6 +218,8 @@ class PetProvider extends ChangeNotifier {
     _sessionOfflineTime = Duration.zero;
     _sessionScreenTime = Duration.zero;
     _distractingAppsUsedInSession.clear();
+    _sessionDistractingSeconds = 0;
+    _sessionDistractingPenaltyApplied = 0;
     notifyListeners();
   }
 

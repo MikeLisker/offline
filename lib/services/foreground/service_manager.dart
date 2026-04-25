@@ -1,15 +1,25 @@
-// ServiceManager: Simplificado, no necesita flutter_foreground_task
-// El ScreenTimeMonitor usa un Timer simple
+import 'package:flutter/services.dart';
+
+// Bridge al servicio nativo Android para mejorar estabilidad en dispositivos reales.
 
 class ServiceManager {
+  static const MethodChannel _platform = MethodChannel('com.example.offline/screen_time');
+
   static Future<bool> startService() async {
-    // No-op: No se necesita servicio en foreground
-    // El monitoring se hace con Timer en ScreenTimeMonitor
-    return true;
+    try {
+      final result = await _platform.invokeMethod<bool>('startScreenTimeService');
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<bool> stopService() async {
-    // No-op
-    return true;
+    try {
+      final result = await _platform.invokeMethod<bool>('stopScreenTimeService');
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 }

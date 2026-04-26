@@ -91,7 +91,7 @@ class _PermissionsDialogState extends State<PermissionsDialog> {
                   _PermissionItemWidget(
                     icon: Icons.notifications,
                     title: 'Notificaciones',
-                    description: 'Te avisaremos sobre el estado de tu mascota',
+                    description: 'Te avisaremos sobre el estado de tu jardín',
                     status: statuses[Permission.notification]!,
                   ),
                   const SizedBox(height: 12),

@@ -1,6 +1,9 @@
 package com.example.offline
 
 import android.app.ActivityManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.usage.UsageStats
 import android.app.usage.UsageStatsManager
 import android.content.Context
@@ -10,6 +13,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import androidx.annotation.RequiresApi
+import androidx.core.app.NotificationCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -101,9 +105,59 @@ class MainActivity : FlutterActivity() {
                         result.error("ERROR", e.message, null)
                     }
                 }
+                "showReminderNotification" -> {
+                    try {
+                        val title = call.argument<String>("title") ?: "Rolana"
+                        val text = call.argument<String>("text") ?: "Estas pasando mucho tiempo en esta app, recuerda cuidar tu jardin."
+                        showReminderNotification(title, text)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("ERROR", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun showReminderNotification(title: String, text: String) {
+        val channelId = "garden_reminders"
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val existingChannel = notificationManager.getNotificationChannel(channelId)
+            if (existingChannel == null) {
+                val channel = NotificationChannel(
+                    channelId,
+                    "Recordatorios del jardín",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Notificaciones por uso prolongado en apps distractoras"
+                }
+                notificationManager.createNotificationChannel(channel)
+            }
+        }
+
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        notificationManager.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
     }
 
     private fun getPendingOfflineDurationMs(): Long {

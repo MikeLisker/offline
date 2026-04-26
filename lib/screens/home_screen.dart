@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import '../providers/pet_provider.dart';
 import '../widgets/pet_visualizer.dart';
 import '../widgets/stats_widget.dart';
+import '../widgets/offline_hours_chart.dart';
 import '../widgets/usage_access_dialog.dart';
 import '../widgets/service_status_widget.dart';
 import '../services/permissions_service.dart';
@@ -43,6 +45,48 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Rolana 🌱'),
         centerTitle: true,
+        actions: [
+          Consumer<PetProvider>(
+            builder: (context, petProvider, _) {
+              return IconButton(
+                tooltip: 'Apps distractoras',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const AppSelectorScreen()),
+                  );
+                },
+                icon: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const Icon(Icons.apps),
+                    if (petProvider.distractingApps.isNotEmpty)
+                      Positioned(
+                        right: -8,
+                        top: -8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade600,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${petProvider.distractingApps.length}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: Consumer<PetProvider>(
         builder: (context, petProvider, _) {
@@ -66,8 +110,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   _ReviveButton(petProvider: petProvider),
                 ],
                 const SizedBox(height: 30),
-                // DEBUG WIDGET
-                _DebugAppsWidget(petProvider: petProvider),
+                const OfflineHoursChart(),
+                if (kDebugMode) ...[
+                  const SizedBox(height: 20),
+                  _DebugAppsWidget(petProvider: petProvider),
+                ],
               ],
             ),
           );
@@ -117,20 +164,8 @@ class _ActionButtons extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.apps),
-              title: const Text('Apps distractoras'),
-              subtitle: Text('${petProvider.distractingApps.length} seleccionadas'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const AppSelectorScreen()),
-                );
-              },
-            ),
-            ListTile(
               leading: const Icon(Icons.edit),
-              title: const Text('Renombrar mascota'),
+              title: const Text('Renombrar entorno'),
               onTap: () {
                 Navigator.pop(context);
                 _showRenameDialog(context, petProvider);
@@ -138,7 +173,7 @@ class _ActionButtons extends StatelessWidget {
             ),
             ListTile(
               leading: const Icon(Icons.refresh),
-              title: const Text('Resetear mascota'),
+              title: const Text('Resetear entorno'),
               onTap: () {
                 Navigator.pop(context);
                 _confirmReset(context, petProvider);
@@ -195,7 +230,7 @@ class _ReviveButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return ElevatedButton(
       onPressed: () => petProvider.revivePet(),
-      child: const Text('Revivir Mascota'),
+      child: const Text('Revivir Jardín'),
     );
   }
 }

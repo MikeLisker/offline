@@ -57,7 +57,7 @@ class _UsageAccessDialogState extends State<UsageAccessDialog> {
             ),
             const SizedBox(height: 16),
             const Text(
-              'Para que OFFLINE pueda monitorear tu uso de aplicaciones y que tu mascota reaccione, necesitamos este permiso especial.',
+              'Para que OFFLINE pueda monitorear tu uso de aplicaciones y que tu jardín reaccione, necesitamos este permiso especial.',
               style: TextStyle(
                 fontSize: 14,
                 color: Colors.grey,

@@ -132,11 +132,35 @@ class PetStorageService {
 
     try {
       final key = 'stats_${date.toIso8601String().split('T')[0]}';
+      final existingData = _statsBox.get(key);
+      Duration existingOfflineTime = Duration.zero;
+      Duration existingScreenTime = Duration.zero;
+      List<String> existingApps = [];
+
+      if (existingData != null) {
+        try {
+          final existingJson = jsonDecode(existingData);
+          existingOfflineTime = Duration(
+            seconds: existingJson['offlineTime'] ?? 0,
+          );
+          existingScreenTime = Duration(
+            seconds: existingJson['screenTime'] ?? 0,
+          );
+          if (existingJson['distractingApps'] is List) {
+            existingApps = (existingJson['distractingApps'] as List)
+                .map((item) => item.toString())
+                .toList();
+          }
+        } catch (e) {
+          logger.w('⚠️ Error leyendo estadísticas previas de $key: $e');
+        }
+      }
+
       final stats = {
         'date': date.toIso8601String(),
-        'offlineTime': offlineTime.inSeconds,
-        'screenTime': screenTime.inSeconds,
-        'distractingApps': distractingAppsUsed,
+        'offlineTime': existingOfflineTime.inSeconds + offlineTime.inSeconds,
+        'screenTime': existingScreenTime.inSeconds + screenTime.inSeconds,
+        'distractingApps': {...existingApps, ...distractingAppsUsed}.toList(),
       };
       await _statsBox.put(key, jsonEncode(stats));
       logger.d('📊 Estadísticas guardadas para ${date.toIso8601String()}');
@@ -180,6 +204,17 @@ class PetStorageService {
       logger.e('❌ Error obteniendo estadísticas históricas: $e');
       return [];
     }
+  }
+
+  /// Obtener estadísticas para una fecha concreta, incluyendo ceros si no existe registro.
+  Future<Map<String, dynamic>> getDailyStatsOrEmpty(DateTime date) async {
+    final stats = await getDailyStats(date);
+    return stats ?? {
+      'date': date.toIso8601String(),
+      'offlineTime': 0,
+      'screenTime': 0,
+      'distractingApps': <String>[],
+    };
   }
 
   /// Limpiar datos (para debug/reset)

@@ -39,13 +39,17 @@ class Pet {
 
   // Verificar si puede subir de nivel
   bool canLevelUp() {
-    return coins >= getCoinsForNextLevel();
+    return energy >= 100 || coins >= getCoinsForNextLevel();
   }
 
   // Subir de nivel
   void levelUp() {
     if (canLevelUp()) {
-      coins -= getCoinsForNextLevel();
+      if (coins >= getCoinsForNextLevel()) {
+        coins -= getCoinsForNextLevel();
+      } else {
+        energy = 75;
+      }
       level = (level + 1).clamp(1, 10);
     }
   }

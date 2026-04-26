@@ -1,7 +1,7 @@
 name: offline
 description: A virtual pet that grows when you stay offline.
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.1.1+2
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

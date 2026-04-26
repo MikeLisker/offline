@@ -27,6 +27,8 @@ class PetProvider extends ChangeNotifier {
   Set<String> _distractingAppsUsedInSession = {};
   int _sessionDistractingSeconds = 0;
   int _sessionDistractingPenaltyApplied = 0;
+  List<int> _todayOfflineSecondsByHour = List.filled(24, 0);
+  DateTime _hourlyBucketsDate = DateTime.now();
 
   Pet get pet => _pet;
   bool get isInitialized => _isInitialized;
@@ -39,6 +41,24 @@ class PetProvider extends ChangeNotifier {
   Duration get sessionScreenTime => _sessionScreenTime;
   
   List<String> get distractingAppsUsed => _distractingAppsUsedInSession.toList();
+
+  Future<List<Map<String, dynamic>>> getWeeklyOfflineStats() async {
+    final today = DateTime.now();
+    final startOfToday = DateTime(today.year, today.month, today.day);
+    final results = <Map<String, dynamic>>[];
+
+    for (int offset = 6; offset >= 0; offset--) {
+      final date = startOfToday.subtract(Duration(days: offset));
+      final stats = await _storageService.getDailyStatsOrEmpty(date);
+      results.add(stats);
+    }
+
+    return results;
+  }
+  List<int> get offlineMinutesByHourToday {
+    _ensureHourlyBucketsForToday(DateTime.now());
+    return _todayOfflineSecondsByHour.map((s) => (s / 60).floor()).toList();
+  }
   
   Future<bool> isScreenOn() async {
     return true; // Placeholder - siempre true
@@ -52,6 +72,8 @@ class PetProvider extends ChangeNotifier {
       await _storageService.init();
 
       _pet = await _storageService.loadPet();
+
+      await _loadTodayStats();
 
       final prefs = await SharedPreferences.getInstance();
       _distractingApps = prefs.getStringList(AppConstants.distractingAppsKey) ?? [];
@@ -76,6 +98,12 @@ class PetProvider extends ChangeNotifier {
         // Actualizar estadísticas de sesión
         _sessionScreenTime += screenTime;
         _distractingAppsUsedInSession.add(packageName);
+        await _storageService.saveDailyStats(
+          date: DateTime.now(),
+          offlineTime: Duration.zero,
+          screenTime: screenTime,
+          distractingAppsUsed: [packageName],
+        );
         
         // Mecánica solicitada: cada 5 minutos acumulados de distractoras = -2 energía.
         // Se acumula en segundos para no depender de "rangos" por callback.
@@ -87,6 +115,13 @@ class PetProvider extends ChangeNotifier {
         if (energyPenalty <= 0) {
           logger.i('⏳ Distracción acumulada: ${_sessionDistractingSeconds}s, aún sin penalización nueva');
           return;
+        }
+
+        for (int i = 0; i < (energyPenalty ~/ 2); i++) {
+          await ScreenTimeMonitor.platform.invokeMethod('showReminderNotification', {
+            'title': 'Rolana',
+            'text': 'Estas pasando mucho tiempo en esta app, recuerda cuidar tu jardin.',
+          });
         }
 
         final oldEnergy = _pet.energy;
@@ -103,6 +138,13 @@ class PetProvider extends ChangeNotifier {
         
         // Actualizar estadísticas de sesión
         _sessionOfflineTime += offlineTime;
+        _addOfflineDurationToHourlyBuckets(offlineTime, DateTime.now());
+        await _storageService.saveDailyStats(
+          date: DateTime.now(),
+          offlineTime: offlineTime,
+          screenTime: Duration.zero,
+          distractingAppsUsed: const [],
+        );
         
         // Fórmula solicitada:
         // Punto1 = TiempoOffline(min) / 4
@@ -209,6 +251,10 @@ class PetProvider extends ChangeNotifier {
     _sessionOfflineTime = Duration.zero;
     _sessionScreenTime = Duration.zero;
     _distractingAppsUsedInSession.clear();
+    _sessionDistractingSeconds = 0;
+    _sessionDistractingPenaltyApplied = 0;
+    _todayOfflineSecondsByHour = List.filled(24, 0);
+    _hourlyBucketsDate = DateTime.now();
     await _storageService.savePet(_pet);
     notifyListeners();
   }
@@ -220,7 +266,62 @@ class PetProvider extends ChangeNotifier {
     _distractingAppsUsedInSession.clear();
     _sessionDistractingSeconds = 0;
     _sessionDistractingPenaltyApplied = 0;
+    _todayOfflineSecondsByHour = List.filled(24, 0);
+    _hourlyBucketsDate = DateTime.now();
     notifyListeners();
+  }
+
+  void _ensureHourlyBucketsForToday(DateTime reference) {
+    if (!_isSameDay(_hourlyBucketsDate, reference)) {
+      _todayOfflineSecondsByHour = List.filled(24, 0);
+      _hourlyBucketsDate = reference;
+    }
+  }
+
+  Future<void> _loadTodayStats() async {
+    final todayStats = await _storageService.getDailyStatsOrEmpty(DateTime.now());
+
+    _sessionOfflineTime = Duration(seconds: todayStats['offlineTime'] as int? ?? 0);
+    _sessionScreenTime = Duration(seconds: todayStats['screenTime'] as int? ?? 0);
+
+    final appsUsed = todayStats['distractingApps'];
+    _distractingAppsUsedInSession = appsUsed is List
+        ? appsUsed.map((item) => item.toString()).toSet()
+        : <String>{};
+
+    _sessionDistractingSeconds = _sessionScreenTime.inSeconds;
+    _sessionDistractingPenaltyApplied = ((_sessionDistractingSeconds / 300) * 2).floor();
+  }
+
+  void _addOfflineDurationToHourlyBuckets(Duration duration, DateTime endTime) {
+    if (duration.inSeconds <= 0) return;
+
+    _ensureHourlyBucketsForToday(endTime);
+
+    final startOfToday = DateTime(endTime.year, endTime.month, endTime.day);
+    int remainingSeconds = duration.inSeconds;
+    DateTime cursor = endTime;
+
+    while (remainingSeconds > 0 && cursor.isAfter(startOfToday)) {
+      final hourStart = DateTime(cursor.year, cursor.month, cursor.day, cursor.hour);
+      int secondsInCurrentHour = cursor.difference(hourStart).inSeconds;
+
+      if (secondsInCurrentHour == 0) {
+        cursor = cursor.subtract(const Duration(seconds: 1));
+        continue;
+      }
+
+      final alloc = remainingSeconds < secondsInCurrentHour
+          ? remainingSeconds
+          : secondsInCurrentHour;
+      _todayOfflineSecondsByHour[cursor.hour] += alloc;
+      remainingSeconds -= alloc;
+      cursor = cursor.subtract(Duration(seconds: alloc));
+    }
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
   @override

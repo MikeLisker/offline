@@ -29,7 +29,7 @@ class StatsWidget extends StatelessWidget {
                 const SizedBox(height: 12),
                 _StatItem(
                   icon: '📱',
-                  label: 'Tiempo en pantalla',
+                  label: 'Tiempo en apps',
                   value: '${petProvider.sessionScreenTime.inMinutes} min',
                 ),
                 const SizedBox(height: 12),
@@ -37,12 +37,6 @@ class StatsWidget extends StatelessWidget {
                   icon: '⚠️',
                   label: 'Apps distractoras',
                   value: '${petProvider.distractingAppsUsed.length}',
-                ),
-                const SizedBox(height: 12),
-                _StatItem(
-                  icon: '⏱️',
-                  label: 'Tiempo total OFFLINE',
-                  value: '${petProvider.pet.totalOfflineTime.inHours}h ${petProvider.pet.totalOfflineTime.inMinutes % 60}m',
                 ),
               ],
             ),

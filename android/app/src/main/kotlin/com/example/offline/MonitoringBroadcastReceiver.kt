@@ -7,6 +7,7 @@ import android.util.Log
 import android.app.usage.UsageStatsManager
 import android.content.SharedPreferences
 import android.app.usage.UsageStats
+import android.os.Build
 import java.util.*
 
 /**
@@ -89,12 +90,41 @@ class MonitoringBroadcastReceiver : BroadcastReceiver() {
         
         Log.d(TAG, "💾 Sesión: ${currentSession/1000}s + ${newDistractionMs/1000}s = ${newSession/1000}s (${newSession/60000}m)")
         
-        // Si pasó 5 minutos (300s = 300000ms), marcar para mostrar overlay
+        // Si pasó 5 minutos (300s = 300000ms), mostrar overlay
         if (newSession >= 300000) {
-            Log.w(TAG, "🚨 ¡5 MINUTOS DE DISTRACCIÓN DETECTADOS!")
-            prefs.edit().putBoolean("should_show_overlay", true).apply()
-            // Resetear la sesión después de mostrar overlay
-            prefs.edit().putLong(KEY_SESSION_DISTRACTION_MS, 0).apply()
+            // Verificar si ya mostramos el overlay recientemente
+            val lastOverlayTime = prefs.getLong("last_overlay_time", 0L)
+            val currentTime = System.currentTimeMillis()
+            val timeSinceLastOverlay = currentTime - lastOverlayTime
+            
+            // Mostrar overlay si es la primera vez O si pasaron 2 minutos (120000ms) desde la última vez
+            if (lastOverlayTime == 0L || timeSinceLastOverlay >= 120000) {
+                Log.w(TAG, "🚨 ¡5+ MINUTOS DE DISTRACCIÓN! Mostrando overlay...")
+                
+                // Mostrar overlay desde el OverlayService
+                val overlayIntent = Intent(context, OverlayService::class.java).apply {
+                    action = "SHOW_OVERLAY"
+                }
+                
+                try {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        context.startForegroundService(overlayIntent)
+                    } else {
+                        context.startService(overlayIntent)
+                    }
+                    Log.d(TAG, "✅ OverlayService disparado para mostrar overlay")
+                    
+                    // Registrar timestamp del overlay mostrado
+                    prefs.edit().putLong("last_overlay_time", currentTime).apply()
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error disparando OverlayService: ${e.message}")
+                }
+                
+                // NO resetear la sesión - permitir que acumule para que el overlay reaparezca cada 2 min
+            } else {
+                val secondsUntilNext = (120000 - timeSinceLastOverlay) / 1000
+                Log.d(TAG, "⏳ Overlay ya mostrado hace poco. Próximo en ~${secondsUntilNext}s")
+            }
         }
     }
 }

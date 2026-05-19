@@ -41,6 +41,11 @@
             android:name=".MonitoringService"
             android:exported="false" />
 
+        <service
+            android:name=".OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
+
         <receiver
             android:name=".MonitoringBroadcastReceiver"
             android:exported="true"

@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -150,51 +151,51 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Iniciar servicio de monitoreo en background
-        val monitoringServiceIntent = Intent(this, MonitoringService::class.java)
-        android.util.Log.d("OfflineApp", "🚀 Iniciando MonitoringService en onCreate()...")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(monitoringServiceIntent)
-        } else {
-            startService(monitoringServiceIntent)
+        try {
+            Log.d("OfflineApp", "🚀 MainActivity.onCreate() iniciando...")
+            
+            // Iniciar MonitoringService como foreground service
+            val monitoringServiceIntent = Intent(this, MonitoringService::class.java).apply {
+                action = "START_MONITORING"
+            }
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(monitoringServiceIntent)
+            } else {
+                startService(monitoringServiceIntent)
+            }
+            
+            Log.d("OfflineApp", "✅ MonitoringService iniciado correctamente")
+        } catch (e: Exception) {
+            Log.e("OfflineApp", "❌ Error en onCreate: ${e.message}")
+            e.printStackTrace()
         }
-        
-        // Iniciar el AlarmManager para ejecutar chequeos cada minuto
-        val intent = Intent(this, MonitoringService::class.java)
-        intent.action = "START_MONITORING"
-        startService(intent)
-        android.util.Log.d("OfflineApp", "✅ AlarmManager configurado para monitoreo cada minuto")
     }
 
     override fun onResume() {
         super.onResume()
         
-        // Sincronizar estado del monitoreo desde background
-        val prefs = getSharedPreferences("offline_monitoring", Context.MODE_PRIVATE)
-        val shouldShowOverlay = prefs.getBoolean("should_show_overlay", false)
-        val sessionDistractionMs = prefs.getLong("session_distraction_ms", 0)
-        
-        if (sessionDistractionMs > 0) {
-            android.util.Log.d("OfflineApp", "📲 Sincronizando distracción desde background: ${sessionDistractionMs/1000}s")
-        }
-        
-        if (shouldShowOverlay) {
-            android.util.Log.w("OfflineApp", "🎯 Mostrando overlay de distracción acumulada en background...")
+        try {
+            // Sincronizar estado del monitoreo desde background
+            val prefs = getSharedPreferences("offline_monitoring", Context.MODE_PRIVATE)
+            val sessionDistractionMs = prefs.getLong("session_distraction_ms", 0)
             
-            // Notificar a Flutter para mostrar overlay
-            flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
-                MethodChannel(messenger, CHANNEL).invokeMethod("showDistractionOverlay", null)
+            if (sessionDistractionMs > 0) {
+                Log.d("OfflineApp", "📲 Sincronizando distracción desde background: ${sessionDistractionMs/1000}s")
             }
             
-            // Resetear flag
-            prefs.edit().putBoolean("should_show_overlay", false).apply()
+            // Resetear sesión cuando volvemos a la app (para que comience nueva sesión en apps distractoras)
+            prefs.edit().putLong("session_distraction_ms", 0).apply()
+            prefs.edit().remove("checkpoint_com.google.android.youtube").apply()
+            prefs.edit().remove("checkpoint_com.google.android.deskclock").apply()
+            
+            // NO resetear last_overlay_time - queremos que el overlay reaparezca cada 2 min
+            // aunque el usuario haya vuelto a la app y regresado a la app distractora
+            
+            Log.d("OfflineApp", "🔄 Sesión reseteada al volver a la app")
+        } catch (e: Exception) {
+            Log.e("OfflineApp", "❌ Error en onResume: ${e.message}")
         }
-        
-        // Resetear checkpoints para nueva sesión
-        android.util.Log.d("OfflineApp", "🔄 Reseteando checkpoints para nueva sesión")
-        prefs.edit().remove("checkpoint_com.google.android.youtube").apply()
-        prefs.edit().remove("checkpoint_com.google.android.deskclock").apply()
-        prefs.edit().putLong("session_distraction_ms", 0).apply()
     }
 
     private fun showReminderNotification(title: String, text: String) {

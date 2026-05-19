@@ -1,6 +1,7 @@
 package com.example.offline
 
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.util.Log
 import android.view.LayoutInflater
@@ -36,66 +37,149 @@ class DistractionOverlay(private val context: Context) {
         onReturnCallback = onReturn
         
         try {
-            // Crear view container
-            val container = FrameLayout(context)
-            container.setBackgroundColor(0xCC000000.toInt()) // Overlay oscuro translúcido
-            
-            // Texto principal
-            val textView = TextView(context)
-            textView.text = "¡Liv te extraña! 🥺"
-            textView.textSize = 28f
-            textView.setTextColor(0xFFFFFFFF.toInt())
-            textView.setPadding(32, 32, 32, 32)
-            textView.setTypeface(null, android.graphics.Typeface.BOLD)
-            
-            // Subtexto
-            val subtextView = TextView(context)
-            subtextView.text = "Vuelve al jardín en 10 minutos\no puedo esperar más..."
-            subtextView.textSize = 16f
-            subtextView.setTextColor(0xFFCCCCCC.toInt())
-            subtextView.setPadding(32, 0, 32, 32)
-            
-            // Botón "Volver"
-            val button = Button(context)
-            button.text = "Volver a Liv ❤️"
-            button.textSize = 18f
-            button.setPadding(32, 24, 32, 24)
-            button.setBackgroundColor(0xFF4CAF50.toInt()) // Verde
-            button.setTextColor(0xFFFFFFFF.toInt())
-            
-            button.setOnClickListener {
-                Log.d(TAG, "User hizo tap en 'Volver'")
-                playReturnSound()
-                vibrate()
-                hide()
-                onReturnCallback?.invoke()
+            // Crear view container - fondo semi-transparente
+            val container = android.widget.FrameLayout(context).apply {
+                setBackgroundColor(0xDD000000.toInt()) // Más opaco para mejor contraste
             }
             
-            // Layout vertical
-            val layout = android.widget.LinearLayout(context)
-            layout.orientation = android.widget.LinearLayout.VERTICAL
-            layout.gravity = android.view.Gravity.CENTER
-            layout.setPadding(32, 100, 32, 100)
+            // Crear un RelativeLayout para centrar mejor el contenido
+            val contentLayout = android.widget.RelativeLayout(context).apply {
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            }
             
-            layout.addView(textView, android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-            ))
-            layout.addView(subtextView, android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-            ))
-            layout.addView(button, android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 32 })
+            // Crear view para el contenido principal (card blanca)
+            val cardView = android.widget.LinearLayout(context).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+                setPadding(48, 80, 48, 80)
+                setBackgroundColor(0xFFFFFFFF.toInt()) // Fondo blanco
+                
+                layoutParams = android.widget.RelativeLayout.LayoutParams(
+                    android.widget.RelativeLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.RelativeLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    addRule(android.widget.RelativeLayout.CENTER_IN_PARENT)
+                    marginStart = 32
+                    marginEnd = 32
+                }
+            }
             
-            container.addView(layout, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            ))
+            // Texto principal
+            val textView = android.widget.TextView(context).apply {
+                text = "¡Liv te extraña! 🥺"
+                textSize = 32f
+                setTextColor(0xFF000000.toInt())
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                gravity = android.view.Gravity.CENTER
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 24 }
+            }
+            cardView.addView(textView)
             
-            // Parámetros de window
+            // Subtexto
+            val subtextView = android.widget.TextView(context).apply {
+                text = "Vuelve al jardín en 10 minutos\no puedo esperar más..."
+                textSize = 18f
+                setTextColor(0xFF666666.toInt())
+                gravity = android.view.Gravity.CENTER
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 48 }
+            }
+            cardView.addView(subtextView)
+            
+            // Contenedor de botones (horizontal)
+            val buttonContainer = android.widget.LinearLayout(context).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 0 }
+            }
+            
+            // Botón "Ignorar" (izquierda)
+            val ignoreButton = android.widget.Button(context).apply {
+                text = "Ignorar"
+                textSize = 16f
+                setPadding(32, 24, 32, 24)
+                setBackgroundColor(0xFFCCCCCC.toInt())
+                setTextColor(0xFF333333.toInt())
+                
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    0,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f // weight = 1 para ocupar espacio igual
+                ).apply { marginEnd = 12 }
+                
+                setOnClickListener {
+                    Log.d(TAG, "✅ User hizo tap en 'Ignorar'")
+                    
+                    // Solo cerrar el overlay sin traer la app
+                    // El overlay reaparecerá en 2 minutos
+                    hide()
+                    onReturnCallback?.invoke()
+                }
+            }
+            buttonContainer.addView(ignoreButton)
+            
+            // Botón "Volver a Liv" (derecha)
+            val returnButton = android.widget.Button(context).apply {
+                text = "Volver a Liv ❤️"
+                textSize = 16f
+                setPadding(32, 24, 32, 24)
+                setBackgroundColor(0xFF4CAF50.toInt())
+                setTextColor(0xFFFFFFFF.toInt())
+                
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    0,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f // weight = 1 para ocupar espacio igual
+                ).apply { marginStart = 12 }
+                
+                setOnClickListener {
+                    Log.d(TAG, "✅ User hizo tap en 'Volver a Liv'")
+                    try {
+                        playReturnSound()
+                        vibrate()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "⚠️ Error con sonido/vibración: ${e.message}")
+                    }
+                    
+                    // Traer MainActivity al foreground
+                    try {
+                        val intent = Intent(context, MainActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        }
+                        context.startActivity(intent)
+                        Log.d(TAG, "✅ MainActivity traída al foreground")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Error trayendo MainActivity: ${e.message}")
+                    }
+                    
+                    hide()
+                    onReturnCallback?.invoke()
+                }
+            }
+            buttonContainer.addView(returnButton)
+            
+            cardView.addView(buttonContainer)
+            
+            // Agregar la card al content layout
+            contentLayout.addView(cardView)
+            
+            // Agregar content layout al container
+            container.addView(contentLayout)
+            
+            // Parámetros de window para que aparezca en background
             val params = WindowManager.LayoutParams().apply {
                 type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -108,25 +192,37 @@ class DistractionOverlay(private val context: Context) {
                 width = WindowManager.LayoutParams.MATCH_PARENT
                 height = WindowManager.LayoutParams.MATCH_PARENT
                 
-                flags = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                // FLAGS: Permitir que sea interactivo y visible
+                flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                
+                // Importante: NO usar FLAG_NOT_FOCUSABLE y FLAG_NOT_TOUCHABLE
+                // Ya que queremos que los botones sean clicables
             }
             
-            // Hacer touchable cuando necesitamos interacción
-            params.flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                          WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-            
             overlayView = container
+            
+            // Verificar que el windowManager sea válido
+            if (windowManager == null) {
+                Log.e(TAG, "❌ WindowManager es null!")
+                return
+            }
+            
             windowManager.addView(container, params)
             isShowing = true
             
             Log.d(TAG, "✅ DistractionOverlay mostrado")
-            playAlertSound()
-            vibrate()
+            try {
+                playAlertSound()
+                vibrate()
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Error con sonido/vibración al mostrar: ${e.message}")
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error mostrando overlay: ${e.message}")
+            e.printStackTrace()
+            isShowing = false
         }
     }
 

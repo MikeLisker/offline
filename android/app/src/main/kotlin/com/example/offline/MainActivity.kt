@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
@@ -21,6 +22,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.offline/screen_time"
+    private var distractionOverlay: DistractionOverlay? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -115,9 +117,84 @@ class MainActivity : FlutterActivity() {
                         result.error("ERROR", e.message, null)
                     }
                 }
+                "showDistractionOverlay" -> {
+                    try {
+                        if (distractionOverlay == null) {
+                            distractionOverlay = DistractionOverlay(this)
+                        }
+                        distractionOverlay?.show {
+                            android.util.Log.d("OfflineApp", "✅ User volvió desde el overlay")
+                            // Callback al volver - Flutter lo maneja
+                            flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
+                                MethodChannel(messenger, CHANNEL).invokeMethod("onUserReturnedFromOverlay", null)
+                            }
+                        }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("ERROR", e.message, null)
+                    }
+                }
+                "hideDistractionOverlay" -> {
+                    try {
+                        distractionOverlay?.hide()
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("ERROR", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        // Iniciar servicio de monitoreo en background
+        val monitoringServiceIntent = Intent(this, MonitoringService::class.java)
+        android.util.Log.d("OfflineApp", "🚀 Iniciando MonitoringService en onCreate()...")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(monitoringServiceIntent)
+        } else {
+            startService(monitoringServiceIntent)
+        }
+        
+        // Iniciar el AlarmManager para ejecutar chequeos cada minuto
+        val intent = Intent(this, MonitoringService::class.java)
+        intent.action = "START_MONITORING"
+        startService(intent)
+        android.util.Log.d("OfflineApp", "✅ AlarmManager configurado para monitoreo cada minuto")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        
+        // Sincronizar estado del monitoreo desde background
+        val prefs = getSharedPreferences("offline_monitoring", Context.MODE_PRIVATE)
+        val shouldShowOverlay = prefs.getBoolean("should_show_overlay", false)
+        val sessionDistractionMs = prefs.getLong("session_distraction_ms", 0)
+        
+        if (sessionDistractionMs > 0) {
+            android.util.Log.d("OfflineApp", "📲 Sincronizando distracción desde background: ${sessionDistractionMs/1000}s")
+        }
+        
+        if (shouldShowOverlay) {
+            android.util.Log.w("OfflineApp", "🎯 Mostrando overlay de distracción acumulada en background...")
+            
+            // Notificar a Flutter para mostrar overlay
+            flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
+                MethodChannel(messenger, CHANNEL).invokeMethod("showDistractionOverlay", null)
+            }
+            
+            // Resetear flag
+            prefs.edit().putBoolean("should_show_overlay", false).apply()
+        }
+        
+        // Resetear checkpoints para nueva sesión
+        android.util.Log.d("OfflineApp", "🔄 Reseteando checkpoints para nueva sesión")
+        prefs.edit().remove("checkpoint_com.google.android.youtube").apply()
+        prefs.edit().remove("checkpoint_com.google.android.deskclock").apply()
+        prefs.edit().putLong("session_distraction_ms", 0).apply()
     }
 
     private fun showReminderNotification(title: String, text: String) {

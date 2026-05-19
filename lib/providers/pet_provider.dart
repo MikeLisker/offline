@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:logger/logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
@@ -118,10 +119,19 @@ class PetProvider extends ChangeNotifier {
         }
 
         for (int i = 0; i < (energyPenalty ~/ 2); i++) {
+          // Mostrar notificación de recordatorio
           await ScreenTimeMonitor.platform.invokeMethod('showReminderNotification', {
             'title': 'Rolana',
             'text': 'Estas pasando mucho tiempo en esta app, recuerda cuidar tu jardin.',
           });
+          
+          // Mostrar overlay cada 5 minutos
+          try {
+            await ScreenTimeMonitor.platform.invokeMethod('showDistractionOverlay');
+            logger.i('🎯 Overlay de distracción mostrado (cada 5 minutos)');
+          } catch (e) {
+            logger.e('❌ Error mostrando overlay: $e');
+          }
         }
 
         final oldEnergy = _pet.energy;
@@ -159,6 +169,34 @@ class PetProvider extends ChangeNotifier {
         _pet.lastScreenTimeCheckpoint = DateTime.now();
         await _storageService.savePet(_pet);
         notifyListeners();
+      });
+
+      // Callback cuando se alcanza 5 minutos en app distractora
+      _screenTimeMonitor.onFiveMinuteMilestone((packageName) async {
+        logger.w('🎯 ¡MILESTONE 5 MIN DETECTADO EN $packageName! Mostrando overlay...');
+        try {
+          await ScreenTimeMonitor.platform.invokeMethod('showDistractionOverlay');
+        } catch (e) {
+          logger.e('❌ Error mostrando overlay: $e');
+        }
+      });
+
+      // Listener para cuando user vuelve desde overlay
+      MethodChannel methodChannel = MethodChannel('com.example.offline/screen_time');
+      methodChannel.setMethodCallHandler((call) async {
+        if (call.method == 'onUserReturnedFromOverlay') {
+          logger.i('❤️ USER VOLVIÓ DESDE OVERLAY! Dando +1-2 de energía...');
+          final bonusEnergy = 2;  // +2 de energía por volver
+          final oldEnergy = _pet.energy;
+          _pet.energy = (_pet.energy + bonusEnergy).clamp(0, 100);
+          logger.i('✨ Bonus energía: $oldEnergy → ${_pet.energy} (+$bonusEnergy)');
+          
+          _pet.lastScreenTimeCheckpoint = DateTime.now();
+          await _storageService.savePet(_pet);
+          notifyListeners();
+          
+          return null;
+        }
       });
 
       // Iniciar monitoreo

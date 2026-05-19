@@ -34,6 +34,11 @@ android {
     }
 }
 
+dependencies {
+    implementation("androidx.work:work-runtime-ktx:2.8.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.1")
+}
+
 flutter {
     source = "../.."
 }

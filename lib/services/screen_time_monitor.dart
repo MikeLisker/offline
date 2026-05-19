@@ -15,6 +15,7 @@ class ScreenTimeMonitor {
   Timer? _monitorTimer;
   final List<Function(Duration offlineTime)> _onOfflineDetected = [];
   final List<Function(String packageName, Duration screenTime)> _onDistractionDetected = [];
+  final List<Function(String packageName)> _onFiveMinuteMilestone = [];
   
   // Checkpoints: guardan el último totalTimeInForeground conocido de cada app
   final Map<String, int> _screenTimeCheckpoints = {};
@@ -89,6 +90,11 @@ class ScreenTimeMonitor {
     logger.i('🛑 Monitoreo detenido');
   }
 
+  /// Resetear sesión (para nueva app distractora)
+  void resetSessionTracking() {
+    logger.i('🔄 Session tracking reseteado');
+  }
+
   /// Verificar si una app es distractora
   bool isAppDistracting(String packageName) {
     return _distractingApps.contains(packageName);
@@ -112,6 +118,11 @@ class ScreenTimeMonitor {
   void onDistractionDetected(
       Function(String packageName, Duration screenTime) callback) {
     _onDistractionDetected.add(callback);
+  }
+
+  /// Registrar callback cuando se detecta milestone de 5 minutos en app distractora
+  void onFiveMinuteMilestone(Function(String packageName) callback) {
+    _onFiveMinuteMilestone.add(callback);
   }
 
   /// Verificar tiempo de pantalla actual vía native channel
@@ -243,26 +254,40 @@ class ScreenTimeMonitor {
             continue;
           }
 
-          logger.d('🔍 Chequeando app distractora: $packageName, uso total: ${currentTotalUsage}ms');
-
           // Obtener el checkpoint anterior (0 si es la primera vez)
           final lastKnownUsage = _screenTimeCheckpoints[packageName] ?? 0;
           
           // Calcular el NUEVO tiempo usado desde el último checkpoint
           final newUsage = (currentTotalUsage - lastKnownUsage).toInt();
-
-          if (newUsage > 0) {
-            final newUsageDuration = Duration(milliseconds: newUsage);
-
-            if (newUsageDuration.inSeconds > 0) {
-              logger.w('📱 ¡DISTRACCIÓN DETECTADA! $packageName: ${newUsageDuration.inMinutes}m nuevos (checkpoint: ${lastKnownUsage}ms → actual: ${currentTotalUsage}ms)');
-              _onDistractionDetected.forEach((cb) => cb(packageName, newUsageDuration));
-              anyDistractionDetected = true;
-            }
-
-            // Actualizar checkpoint al valor actual total
-            _screenTimeCheckpoints[packageName] = currentTotalUsage.toInt();
+          
+          logger.d('🔍 Chequeando app distractora: $packageName');
+          logger.d('   📊 Uso total: ${currentTotalUsage}ms (${(currentTotalUsage/60000).toStringAsFixed(2)}min)');
+          logger.d('   ➕ Nuevo uso desde checkpoint: ${newUsage}ms (${(newUsage/60000).toStringAsFixed(2)}min)');
+          
+          // Si hay uso histórico pero es la primera detección: acumular 1 check (60s)
+          if (currentTotalUsage > 0 && lastKnownUsage == 0) {
+            final duration = Duration(seconds: 60);
+            logger.w('🎯 ¡PRIMERA DETECCIÓN DISTRACCIÓN! $packageName: +${duration.inSeconds}s iniciales');
+            _onDistractionDetected.forEach((cb) => cb(packageName, duration));
+            anyDistractionDetected = true;
+          } 
+          // Si hay nuevo uso: acumular ese nuevo uso
+          else if (newUsage > 0) {
+            final duration = Duration(milliseconds: newUsage);
+            logger.w('🎯 ¡INCREMENTO DE DISTRACCIÓN! $packageName: +${duration.inSeconds}s nuevo');
+            _onDistractionDetected.forEach((cb) => cb(packageName, duration));
+            anyDistractionDetected = true;
+          } 
+          // App sigue abierta sin nuevo uso: acumular +60s por check
+          else if (currentTotalUsage > 0 && lastKnownUsage > 0) {
+            final duration = Duration(seconds: 60);
+            logger.d('   ⏱️ App aún detectada: +${duration.inSeconds}s por check (~1 min)');
+            _onDistractionDetected.forEach((cb) => cb(packageName, duration));
+            anyDistractionDetected = true;
           }
+          
+          // Actualizar checkpoint
+          _screenTimeCheckpoints[packageName] = currentTotalUsage.toInt();
         }
 
         if (!anyDistractionDetected) {

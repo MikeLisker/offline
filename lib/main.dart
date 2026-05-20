@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:logger/logger.dart';
 
 import 'providers/pet_provider.dart';
+import 'providers/coupon_provider.dart';
 import 'screens/home_screen.dart';
 import 'services/permissions_service.dart';
 
@@ -29,6 +30,7 @@ class OfflineApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => PetProvider()),
+        ChangeNotifierProvider(create: (_) => CouponProvider()),
       ],
       child: MaterialApp(
         title: 'Rolana',

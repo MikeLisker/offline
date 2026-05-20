@@ -9,6 +9,7 @@ import '../widgets/usage_access_dialog.dart';
 import '../widgets/service_status_widget.dart';
 import '../services/permissions_service.dart';
 import 'app_selector_screen.dart';
+import 'coupons_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -114,6 +115,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (kDebugMode) ...[
                   const SizedBox(height: 20),
                   _DebugAppsWidget(petProvider: petProvider),
+                  const SizedBox(height: 12),
+                  _DebugCoinsWidget(petProvider: petProvider),
                 ],
               ],
             ),
@@ -163,6 +166,19 @@ class _ActionButtons extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            ListTile(
+              leading: const Icon(Icons.card_giftcard),
+              title: const Text('Cupones & Recompensas'),
+              subtitle: Text('${petProvider.pet.coins} 🪙'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const CouponsScreen()),
+                );
+              },
+            ),
+            const Divider(),
             ListTile(
               leading: const Icon(Icons.edit),
               title: const Text('Renombrar entorno'),
@@ -283,6 +299,85 @@ class _DebugAppsWidget extends StatelessWidget {
               const SizedBox(height: 8),
               Text('  Tiempo en apps: ${petProvider.sessionScreenTime.inMinutes}m'),
               Text('  Tiempo offline: ${petProvider.sessionOfflineTime.inMinutes}m'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DebugCoinsWidget extends StatelessWidget {
+  final PetProvider petProvider;
+  const _DebugCoinsWidget({super.key, required this.petProvider});
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpansionTile(
+      title: const Text('💰 DEBUG: Monedas'),
+      subtitle: Text('Saldo actual: ${petProvider.pet.coins}'),
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Monedas actuales: ${petProvider.pet.coins} 🪙',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                onPressed: () {
+                  petProvider.addCoins(1000);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ +1000 monedas agregadas'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Agregar 1000 monedas'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.shade600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ElevatedButton.icon(
+                onPressed: () {
+                  petProvider.addCoins(100);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ +100 monedas agregadas'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Agregar 100 monedas'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue.shade600,
+                ),
+              ),
             ],
           ),
         ),

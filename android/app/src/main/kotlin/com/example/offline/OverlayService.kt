@@ -4,6 +4,8 @@ import android.app.Service
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -57,18 +59,20 @@ class OverlayService : Service() {
             
             when (intent?.action) {
                 "SHOW_OVERLAY" -> {
-                    // Mostrar overlay en un thread separado para evitar bloqueos
-                    Thread {
+                    // Ejecutar en el main thread usando Handler con Looper.getMainLooper()
+                    Handler(Looper.getMainLooper()).post {
                         try {
-                            Thread.sleep(500) // Delay pequeño para permitir que el servicio se estabilice
                             showOverlay()
                         } catch (e: Exception) {
-                            Log.e(TAG, "❌ Error mostrando overlay en thread: ${e.message}")
+                            Log.e(TAG, "❌ Error mostrando overlay: ${e.message}")
+                            e.printStackTrace()
                         }
-                    }.start()
+                    }
                 }
                 "HIDE_OVERLAY" -> {
-                    hideOverlay()
+                    Handler(Looper.getMainLooper()).post {
+                        hideOverlay()
+                    }
                 }
             }
             

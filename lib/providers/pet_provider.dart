@@ -283,6 +283,14 @@ class PetProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Agregar monedas (para debug/testing)
+  Future<void> addCoins(int amount) async {
+    _pet.coins += amount;
+    logger.i('💰 Agregadas $amount monedas. Total: ${_pet.coins}');
+    await _storageService.savePet(_pet);
+    notifyListeners();
+  }
+
   Future<void> resetPet() async {
     await _storageService.clear();
     _pet = Pet();

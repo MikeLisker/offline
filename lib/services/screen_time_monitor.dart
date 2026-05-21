@@ -222,10 +222,12 @@ class ScreenTimeMonitor {
 
         bool anyDistractionDetected = false;
         
-        logger.i('📊 Estadísticas recibidas: ${statsMap.length} apps');
-        logger.i('🎯 Apps distractoras a detectar: $_distractingApps');
+        logger.i('📊 Estadísticas recibidas: ${statsMap.length} apps TOTALES en el sistema');
+        logger.i('🎯 IMPORTANTE: Solo se cuentan apps distractoras: $_distractingApps');
+        logger.i('✅ FLUTTER ES EL ÚNICO CONTADOR - Android es pasivo (sin acumulación)');
         
         // Procesar datos: solo contar el incremento desde el último checkpoint
+        // IMPORTANTE: Solo se acumula tiempo para apps distractoras
         for (var entry in statsMap.entries) {
           final packageName = entry.key;
           
@@ -251,6 +253,7 @@ class ScreenTimeMonitor {
 
           // Solo procesar si es app distractora
           if (!isAppDistracting(packageName)) {
+            logger.d('⏭️ $packageName - NO es distractora (ignorada)');
             continue;
           }
 
@@ -264,30 +267,20 @@ class ScreenTimeMonitor {
           logger.d('   📊 Uso total: ${currentTotalUsage}ms (${(currentTotalUsage/60000).toStringAsFixed(2)}min)');
           logger.d('   ➕ Nuevo uso desde checkpoint: ${newUsage}ms (${(newUsage/60000).toStringAsFixed(2)}min)');
           
-          // Si hay uso histórico pero es la primera detección: acumular 1 check (60s)
-          if (currentTotalUsage > 0 && lastKnownUsage == 0) {
-            final duration = Duration(seconds: 60);
-            logger.w('🎯 ¡PRIMERA DETECCIÓN DISTRACCIÓN! $packageName: +${duration.inSeconds}s iniciales');
-            _onDistractionDetected.forEach((cb) => cb(packageName, duration));
-            anyDistractionDetected = true;
-          } 
-          // Si hay nuevo uso: acumular ese nuevo uso
-          else if (newUsage > 0) {
+          // ✅ SOLO CONTAR TIEMPO REAL: si hay incremento desde el último checkpoint
+          if (newUsage > 0) {
             final duration = Duration(milliseconds: newUsage);
-            logger.w('🎯 ¡INCREMENTO DE DISTRACCIÓN! $packageName: +${duration.inSeconds}s nuevo');
+            logger.w('🎯 ¡INCREMENTO DE DISTRACCIÓN! $packageName: +${duration.inSeconds}s (${(duration.inMinutes)}m ${(duration.inSeconds % 60)}s)');
             _onDistractionDetected.forEach((cb) => cb(packageName, duration));
             anyDistractionDetected = true;
-          } 
-          // App sigue abierta sin nuevo uso: acumular +60s por check
-          else if (currentTotalUsage > 0 && lastKnownUsage > 0) {
-            final duration = Duration(seconds: 60);
-            logger.d('   ⏱️ App aún detectada: +${duration.inSeconds}s por check (~1 min)');
-            _onDistractionDetected.forEach((cb) => cb(packageName, duration));
-            anyDistractionDetected = true;
+            
+            // Actualizar checkpoint al nuevo valor real
+            _screenTimeCheckpoints[packageName] = currentTotalUsage.toInt();
+          } else {
+            // ❌ NO hacer nada si no hay incremento real
+            // La app está cerrada o pausada, no contar nada
+            logger.d('   ⏸️ Sin cambios reales (app cerrada/pausada, sin nuevo uso)');
           }
-          
-          // Actualizar checkpoint
-          _screenTimeCheckpoints[packageName] = currentTotalUsage.toInt();
         }
 
         if (!anyDistractionDetected) {

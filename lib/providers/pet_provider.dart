@@ -116,7 +116,7 @@ class PetProvider extends ChangeNotifier {
         );
         
         // IMPORTANTE: Se suma SOLO el tiempo de apps DISTRACTORAS
-        // Mecánica: cada 5 minutos acumulados de distractoras = -1 energía
+        // Mecánica: cada 5 minutos acumulados de distractoras = -2 energía
         // Se acumula en segundos para no depender de "rangos" por callback.
         _sessionDistractingSeconds += screenTime.inSeconds;
         final totalPenaltyShouldBe = ((_sessionDistractingSeconds / 300) * 2).floor();

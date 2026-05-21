@@ -228,7 +228,25 @@ class CouponProvider extends ChangeNotifier {
 
   // Obtener cupones canjeados
   List<Coupon> getRedeemedCoupons() {
-    return _redeemedCoupons;
+    return _redeemedCoupons.where((c) => !c.isRedeemedCouponExpired).toList();
+  }
+
+  // Obtener cupones canjeados vencidos
+  List<Coupon> getExpiredRedeemedCoupons() {
+    return _redeemedCoupons.where((c) => c.isRedeemedCouponExpired).toList();
+  }
+
+  // Restablecer todos los cupones (debug)
+  void resetAllCoupons() {
+    logger.i('🔄 Restableciendo todos los cupones...');
+    for (var coupon in _availableCoupons) {
+      coupon.isRedeemed = false;
+      coupon.redeemedDate = null;
+      coupon.couponCode = null;
+    }
+    _redeemedCoupons.clear();
+    logger.i('✅ Cupones restablecidos');
+    notifyListeners();
   }
 
   // Obtener resumen de categorías

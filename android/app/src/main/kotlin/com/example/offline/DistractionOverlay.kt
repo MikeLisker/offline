@@ -123,8 +123,8 @@ class DistractionOverlay(private val context: Context) {
                     
                     // Solo cerrar el overlay sin traer la app
                     // El overlay reaparecerá en 2 minutos
+                    // ⚠️ NO INVOCAR callback aquí - solo cierra el overlay
                     hide()
-                    onReturnCallback?.invoke()
                 }
             }
             buttonContainer.addView(ignoreButton)

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/coupon.dart';
 import '../providers/coupon_provider.dart';
 import '../providers/pet_provider.dart';
+import 'redeemed_coupons_widget.dart';
 
 class CouponsScreen extends StatefulWidget {
   const CouponsScreen({super.key});
@@ -20,7 +21,8 @@ class _CouponsScreenState extends State<CouponsScreen>
   void initState() {
     super.initState();
     final categories = context.read<CouponProvider>().getAllCategories();
-    _tabController = TabController(length: categories.length + 1, vsync: this);
+    // +2 para agregar pestaña de "Redimidos" al inicio
+    _tabController = TabController(length: categories.length + 2, vsync: this);
   }
 
   @override
@@ -55,6 +57,15 @@ class _CouponsScreenState extends State<CouponsScreen>
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
           tabs: [
+            Tab(
+              child: Row(
+                children: const [
+                  Icon(Icons.card_giftcard),
+                  SizedBox(width: 8),
+                  Text('Redimidos'),
+                ],
+              ),
+            ),
             Tab(
               child: Row(
                 children: const [
@@ -137,6 +148,20 @@ class _CouponsScreenState extends State<CouponsScreen>
             child: TabBarView(
               controller: _tabController,
               children: [
+                // Tab "Cupones Redimidos"
+                RedeemedCouponsWidget(
+                  redeemedCoupons: couponProvider.getRedeemedCoupons(),
+                  onReset: () {
+                    couponProvider.resetAllCoupons();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('🔄 Cupones restablecidos'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  isDebugMode: true, // En producción, cambiar a: kDebugMode
+                ),
                 // Tab "Todos"
                 _buildCouponList(
                   couponProvider.getUnredeemedCoupons(),

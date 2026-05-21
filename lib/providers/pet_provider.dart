@@ -28,6 +28,12 @@ class PetProvider extends ChangeNotifier {
   Set<String> _distractingAppsUsedInSession = {};
   int _sessionDistractingSeconds = 0;
   int _sessionDistractingPenaltyApplied = 0;
+  
+  // Control de overlay: debe aparecer a los 5 minutos, luego cada 2 minutos, reseteándose cada 24 horas
+  int _overlayAccumulatedSeconds = 0; // Segundos acumulados desde último overlay (se resetea a las 24h)
+  DateTime? _lastOverlayShownTime; // Cuándo se mostró el último overlay
+  DateTime _overlayDailyResetTime = DateTime.now(); // Medianoche de hoy
+  
   List<int> _todayOfflineSecondsByHour = List.filled(24, 0);
   DateTime _hourlyBucketsDate = DateTime.now();
 
@@ -93,10 +99,13 @@ class PetProvider extends ChangeNotifier {
       logger.i('📲 Apps distractoras sincronizadas: ${_distractingApps.length}');
       
       // Conectar callbacks
+      // 🔑 ÚNICO CALLBACK DE ACUMULACIÓN: Esto es el ÚNICO lugar donde se suma tiempo
+      // IMPORTANTE: Solo recibe reportes de apps DISTRACTORAS (ScreenTimeMonitor filtra)
       _screenTimeMonitor.onDistractionDetected((packageName, screenTime) async {
-        logger.w('🚨 ¡CALLBACK DISTRACCIÓN! $packageName (${screenTime.inMinutes}m ${screenTime.inSeconds % 60}s)');
+        logger.w('🎯 ¡DISTRACCIÓN DETECTADA (SOLO APPS DISTRACTORAS)! $packageName: +${screenTime.inSeconds}s (${screenTime.inMinutes}m ${screenTime.inSeconds % 60}s)');
+        logger.i('ℹ️ NOTA: Solo Flutter suma tiempo (Android es pasivo). Este es el ÚNICO acumulador.');
         
-        // Actualizar estadísticas de sesión
+        // Actualizar estadísticas de sesión (SOLO apps distractoras)
         _sessionScreenTime += screenTime;
         _distractingAppsUsedInSession.add(packageName);
         await _storageService.saveDailyStats(
@@ -106,32 +115,71 @@ class PetProvider extends ChangeNotifier {
           distractingAppsUsed: [packageName],
         );
         
-        // Mecánica solicitada: cada 5 minutos acumulados de distractoras = -2 energía.
+        // IMPORTANTE: Se suma SOLO el tiempo de apps DISTRACTORAS
+        // Mecánica: cada 5 minutos acumulados de distractoras = -1 energía
         // Se acumula en segundos para no depender de "rangos" por callback.
         _sessionDistractingSeconds += screenTime.inSeconds;
         final totalPenaltyShouldBe = ((_sessionDistractingSeconds / 300) * 2).floor();
         final energyPenalty = totalPenaltyShouldBe - _sessionDistractingPenaltyApplied;
         _sessionDistractingPenaltyApplied = totalPenaltyShouldBe;
 
-        if (energyPenalty <= 0) {
-          logger.i('⏳ Distracción acumulada: ${_sessionDistractingSeconds}s, aún sin penalización nueva');
-          return;
+        // 🎯 LÓGICA DE OVERLAY: Basada en tiempo real de Flutter
+        // Primero: controlar si se debe resetear (cada 24 horas a medianoche)
+        final now = DateTime.now();
+        final todayMidnight = DateTime(now.year, now.month, now.day);
+        if (todayMidnight.isAfter(_overlayDailyResetTime)) {
+          // Ya pasó medianoche, resetear el contador de overlay
+          _overlayAccumulatedSeconds = 0;
+          _lastOverlayShownTime = null;
+          _overlayDailyResetTime = todayMidnight;
+          logger.i('🔄 OVERLAY CONTADOR RESETEADO (nueva día a las 24h)');
         }
 
-        for (int i = 0; i < (energyPenalty ~/ 2); i++) {
+        // Acumular tiempo para el overlay
+        _overlayAccumulatedSeconds += screenTime.inSeconds;
+        logger.i('📊 Overlay tiempo acumulado: ${_overlayAccumulatedSeconds}s (próximo a los 300s)');
+
+        // Determinar si mostrar overlay
+        bool shouldShowOverlay = false;
+        String overlayReason = '';
+
+        if (_lastOverlayShownTime == null && _overlayAccumulatedSeconds >= 300) {
+          // Primera vez: 5 minutos acumulados
+          shouldShowOverlay = true;
+          overlayReason = 'PRIMER OVERLAY (primeros 5 minutos)';
+        } else if (_lastOverlayShownTime != null) {
+          // Ya se mostró al menos una vez, mostrar cada 2 minutos
+          final secondsSinceLastOverlay = now.difference(_lastOverlayShownTime!).inSeconds;
+          if (secondsSinceLastOverlay >= 120) {
+            shouldShowOverlay = true;
+            overlayReason = 'OVERLAY REPETIDO (cada 2 minutos)';
+          }
+        }
+
+        // Mostrar overlay si corresponde
+        if (shouldShowOverlay) {
+          _lastOverlayShownTime = now;
+          logger.w('🎯 $overlayReason - Mostrando overlay ahora...');
+          
           // Mostrar notificación de recordatorio
           await ScreenTimeMonitor.platform.invokeMethod('showReminderNotification', {
             'title': 'Rolana',
             'text': 'Estas pasando mucho tiempo en esta app, recuerda cuidar tu jardin.',
           });
           
-          // Mostrar overlay cada 5 minutos
+          // Mostrar overlay
           try {
             await ScreenTimeMonitor.platform.invokeMethod('showDistractionOverlay');
-            logger.i('🎯 Overlay de distracción mostrado (cada 5 minutos)');
+            logger.i('✅ Overlay mostrado exitosamente');
           } catch (e) {
             logger.e('❌ Error mostrando overlay: $e');
           }
+        }
+
+        // RESTADOR DE ENERGÍA: cada 5 minutos = -1 energía
+        if (energyPenalty <= 0) {
+          logger.i('⏳ Distracción acumulada: ${_sessionDistractingSeconds}s, aún sin penalización nueva');
+          return;
         }
 
         final oldEnergy = _pet.energy;
@@ -156,14 +204,21 @@ class PetProvider extends ChangeNotifier {
           distractingAppsUsed: const [],
         );
         
-        // Fórmula solicitada:
-        // Punto1 = TiempoOffline(min) / 4
-        // PuntoOffline = Punto1 * 2
-        final punto1 = offlineTime.inMinutes ~/ 4;
-        final energyGain = punto1 * 2;
+        // 💰 USAR MÉTODO UNIFIED: addEnergyFromOfflineTime()
+        // Esto suma TANTO energía como monedas
+        // Fórmula: cada 2 minutos = +1 energía y +1 moneda
         final oldEnergy = _pet.energy;
-        _pet.energy = (_pet.energy + energyGain).clamp(0, 100);
-        logger.i('⚡ ENERGÍA AUMENTADA: $oldEnergy → ${_pet.energy} (+$energyGain por ${offlineTime.inMinutes}m offline; punto1=$punto1)');
+        final oldCoins = _pet.coins;
+        
+        _pet.addEnergyFromOfflineTime(offlineTime);
+        
+        final newEnergy = _pet.energy;
+        final newCoins = _pet.coins;
+        final energyGain = newEnergy - oldEnergy;
+        final coinsGain = newCoins - oldCoins;
+        
+        logger.i('⚡ ENERGÍA AUMENTADA: $oldEnergy → $newEnergy (+$energyGain por ${offlineTime.inMinutes}m offline)');
+        logger.i('💰 MONEDAS AGREGADAS: $oldCoins → $newCoins (+$coinsGain por ${offlineTime.inMinutes}m offline)');
         logger.i('💾 Guardando... (offline time: ${_sessionOfflineTime.inMinutes}m acumulados en sesión)');
         
         _pet.lastScreenTimeCheckpoint = DateTime.now();
@@ -255,6 +310,8 @@ class PetProvider extends ChangeNotifier {
     await _storageService.savePet(_pet);
     _sessionDistractingSeconds = 0;
     _sessionDistractingPenaltyApplied = 0;
+    _overlayAccumulatedSeconds = 0;
+    _lastOverlayShownTime = null;
     logger.i('🎯 Apps distractoras actualizadas en monitor: ${packages.length}');
     
     await ServiceManager.stopService();
@@ -299,6 +356,8 @@ class PetProvider extends ChangeNotifier {
     _distractingAppsUsedInSession.clear();
     _sessionDistractingSeconds = 0;
     _sessionDistractingPenaltyApplied = 0;
+    _overlayAccumulatedSeconds = 0;
+    _lastOverlayShownTime = null;
     _todayOfflineSecondsByHour = List.filled(24, 0);
     _hourlyBucketsDate = DateTime.now();
     await _storageService.savePet(_pet);
@@ -312,6 +371,8 @@ class PetProvider extends ChangeNotifier {
     _distractingAppsUsedInSession.clear();
     _sessionDistractingSeconds = 0;
     _sessionDistractingPenaltyApplied = 0;
+    _overlayAccumulatedSeconds = 0;
+    _lastOverlayShownTime = null;
     _todayOfflineSecondsByHour = List.filled(24, 0);
     _hourlyBucketsDate = DateTime.now();
     notifyListeners();

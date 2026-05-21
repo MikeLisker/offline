@@ -186,13 +186,32 @@ class MainActivity : FlutterActivity() {
             
             // Resetear sesión cuando volvemos a la app (para que comience nueva sesión en apps distractoras)
             prefs.edit().putLong("session_distraction_ms", 0).apply()
-            prefs.edit().remove("checkpoint_com.google.android.youtube").apply()
-            prefs.edit().remove("checkpoint_com.google.android.deskclock").apply()
+            
+            // 🔑 LIMPIAR DINÁMICAMENTE todos los checkpoints de las apps configuradas en Flutter
+            // Leer las apps distractoras configuradas por el usuario desde SharedPreferences DEFAULT
+            val defaultPrefs = android.preference.PreferenceManager.getDefaultSharedPreferences(this)
+            val distractingAppsSet = defaultPrefs.getStringSet("distracting_apps", emptySet()) ?: emptySet()
+            
+            // Si no hay apps configuradas, usar valores por defecto
+            val distractingApps = if (distractingAppsSet.isNotEmpty()) {
+                distractingAppsSet
+            } else {
+                setOf(
+                    "com.google.android.youtube",
+                    "com.google.android.deskclock"
+                )
+            }
+            
+            // Limpiar todos los checkpoints de las apps distractoras
+            for (appPackage in distractingApps) {
+                prefs.edit().remove("checkpoint_$appPackage").apply()
+                Log.d("OfflineApp", "🗑️ Checkpoint limpiado: $appPackage")
+            }
             
             // NO resetear last_overlay_time - queremos que el overlay reaparezca cada 2 min
             // aunque el usuario haya vuelto a la app y regresado a la app distractora
             
-            Log.d("OfflineApp", "🔄 Sesión reseteada al volver a la app")
+            Log.d("OfflineApp", "🔄 Sesión reseteada al volver a la app (${distractingApps.size} apps monitoreadas)")
         } catch (e: Exception) {
             Log.e("OfflineApp", "❌ Error en onResume: ${e.message}")
         }

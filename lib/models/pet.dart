@@ -56,12 +56,12 @@ class Pet {
 
   // Añadir energía por tiempo offline
   void addEnergyFromOfflineTime(Duration offlineTime) {
-    // 1 minuto offline = 1 punto de energía
-    int energyGain = offlineTime.inMinutes ~/ 1;
+    // 1 minuto offline = 0.5 punto de energía (o cada 2 min = 1 energía)
+    int energyGain = offlineTime.inMinutes ~/ 2;
     energy = (energy + energyGain).clamp(0, 100);
     
-    // Cada 10 minutos offline = 1 moneda
-    int coinsGain = offlineTime.inMinutes ~/ 10;
+    // Cada 2 minutos offline = 1 moneda
+    int coinsGain = offlineTime.inMinutes ~/ 2;
     coins += coinsGain;
     
     totalOfflineTime += offlineTime;
